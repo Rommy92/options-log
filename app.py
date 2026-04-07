@@ -234,10 +234,20 @@ with st.sidebar:
     tickers = load_tickers()
     all_trades = load_trades()
 
-    for sym in tickers:
+    # Sort tickers by open premium descending
+    def ticker_open_premium(sym):
+        return sum(float(t.get("total_premium") or 0)
+                   for t in all_trades
+                   if t["symbol"] == sym and not t.get("closed") and t["type"] != "Stock")
+
+    tickers_sorted = sorted(tickers, key=ticker_open_premium, reverse=True)
+
+    for sym in tickers_sorted:
         sym_trades = [t for t in all_trades if t["symbol"] == sym]
+        open_prem = ticker_open_premium(sym)
         closed_pnl = sum(float(t.get("closed_pnl") or 0) for t in sym_trades if t.get("closed"))
-        pnl_str = f"+${closed_pnl:.0f}" if closed_pnl > 0 else (f"-${abs(closed_pnl):.0f}" if closed_pnl < 0 else "—")
+        prem_str = f"${open_prem:.0f}" if open_prem else "—"
+        pnl_str = f"+${closed_pnl:.0f}" if closed_pnl > 0 else (f"-${abs(closed_pnl):.0f}" if closed_pnl < 0 else "")
         col1, col2 = st.columns([2, 1])
         with col1:
             is_active = st.session_state.active_ticker == sym
@@ -247,8 +257,9 @@ with st.sidebar:
                 st.session_state.active_tab = "log"
                 st.rerun()
         with col2:
-            color = "green" if closed_pnl > 0 else ("red" if closed_pnl < 0 else "")
-            st.markdown(f'<span class="{color}" style="font-size:11px;line-height:2.4">{pnl_str}</span>', unsafe_allow_html=True)
+            color = "green" if open_prem > 0 else ("red" if closed_pnl < 0 else "")
+            label = prem_str if open_prem else (pnl_str or "—")
+            st.markdown(f'<span class="{color}" style="font-size:11px;line-height:2.4">{label}</span>', unsafe_allow_html=True)
 
     st.markdown("---")
     new_sym = st.text_input("Add ticker", placeholder="AAPL", label_visibility="collapsed")
@@ -524,73 +535,140 @@ def render_trade_card(t, sym):
     dit = days_between(t["date"], str(date.today()))
     dte_left = days_between(str(date.today()), t.get("expiry", "")) if t.get("expiry") else None
 
-    type_tag = f'<span class="tag tag-{t["type"].lower()}">{t["type"]}</span>'
-    side_tag = f'<span class="tag tag-{t["side"].lower()}">{t["side"]}</span>'
+    with st.container(border=True):
+        # Header row
+        col_tags, col_date = st.columns([3, 1])
+        with col_tags:
+            type_color = {"Call": "🔵", "Put": "🟡", "Stock": "⚫"}
+            side_color = {"Sell": "🟢", "Buy": "🔴"}
+            st.markdown(f"**{type_color.get(t['type'],'')} {t['type']}** &nbsp; {side_color.get(t['side'],'')} {t['side']}")
+        with col_date:
+            st.caption(t["date"])
 
-    # Assignment risk
-    risk_html = ""
-    if is_opt and t.get("spot") and t.get("strike") and t["side"] == "Sell":
-        spot = float(t["spot"]); strike = float(t["strike"])
-        dist = (strike - spot) if t["type"] == "Call" else (spot - strike)
-        dist_pct = dist / spot * 100
-        color = "#a8d472" if dist_pct > 10 else ("#f0c060" if dist_pct > 4 else "#e87070")
-        sign = "+" if dist >= 0 else ""
-        risk_html = f'<div style="color:{color};font-size:12px">Distance to strike: {sign}${abs(dist):.2f} ({sign}{dist_pct:.1f}%)</div>'
+        if is_opt:
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Strike", f"${float(t['strike']):.2f}")
+            c2.metric("Expiry", t.get("expiry", "—"))
+            c3.metric("Contracts", t.get("contracts", 1))
+            c4.metric("Premium/ct", f"${float(t['premium']):.2f}")
 
-    # Breakeven
-    be_html = ""
-    if is_opt and t.get("spot") and t["side"] == "Sell":
-        pps = float(t["total_premium"]) / (int(t.get("contracts",1)) * 100)
-        be = float(t["spot"]) - pps if t["type"] == "Call" else float(t["strike"]) - pps
-        be_html = f'<div class="muted" style="font-size:12px">Downside breakeven: ${be:.2f}</div>'
+            c5, c6, c7, c8 = st.columns(4)
+            c5.metric("Total premium", f"${float(t['total_premium']):.2f}")
+            c6.metric("Days to exp", f"{dte_left}d" if dte_left is not None else "—")
+            c7.metric("Days held", f"{dit}d")
+            ann_str = f"{float(t['annualized']):.1f}%" if t.get("annualized") else "—"
+            c8.metric("Proj. annualized", ann_str)
 
-    dte_color = "#e87070" if dte_left is not None and dte_left <= 5 else ("#f0c060" if dte_left is not None and dte_left <= 14 else "#7a7a72")
-    notes_html = f'<div style="font-size:11px;color:#7a7a72;margin-top:8px;border-top:1px solid rgba(255,255,255,0.07);padding-top:8px">✎ {t["notes"]}</div>' if t.get("notes") else ""
+            # Assignment risk
+            if t.get("spot") and t.get("strike") and t["side"] == "Sell":
+                spot = float(t["spot"]); strike = float(t["strike"])
+                dist = (strike - spot) if t["type"] == "Call" else (spot - strike)
+                dist_pct = dist / spot * 100
+                sign = "+" if dist >= 0 else ""
+                color = "normal" if dist_pct > 10 else ("off" if dist_pct > 4 else "inverse")
+                st.metric("Distance to strike", f"{sign}${abs(dist):.2f} ({sign}{dist_pct:.1f}%)", delta_color=color)
 
-    if is_opt:
-        ann_str = f"{float(t['annualized']):.1f}%" if t.get("annualized") else "—"
-        content = f"""
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-top:12px">
-            <div><div style="font-size:10px;color:#7a7a72;text-transform:uppercase">Strike</div><div style="font-size:14px">${float(t['strike']):.2f}</div></div>
-            <div><div style="font-size:10px;color:#7a7a72;text-transform:uppercase">Expiry</div><div style="font-size:14px;color:{dte_color}">{t.get('expiry','—')}</div></div>
-            <div><div style="font-size:10px;color:#7a7a72;text-transform:uppercase">Contracts</div><div style="font-size:14px">{t.get('contracts',1)}</div></div>
-            <div><div style="font-size:10px;color:#7a7a72;text-transform:uppercase">Premium/ct</div><div style="font-size:14px;color:#f0c060">${float(t['premium']):.2f}</div></div>
-            <div><div style="font-size:10px;color:#7a7a72;text-transform:uppercase">Total premium</div><div style="font-size:18px;color:#a8d472">${float(t['total_premium']):.2f}</div></div>
-            <div><div style="font-size:10px;color:#7a7a72;text-transform:uppercase">Days to exp</div><div style="font-size:14px;color:{dte_color}">{f"{dte_left}d" if dte_left is not None else "—"}</div></div>
-            <div><div style="font-size:10px;color:#7a7a72;text-transform:uppercase">Days held</div><div style="font-size:14px;color:#7a7a72">{dit}d</div></div>
-            <div><div style="font-size:10px;color:#7a7a72;text-transform:uppercase">Proj. annualized</div><div style="font-size:14px;color:#70a8e8">{ann_str}</div></div>
-        </div>
-        {risk_html}{be_html}{notes_html}
-        """
-    else:
-        content = f"""
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-top:12px">
-            <div><div style="font-size:10px;color:#7a7a72;text-transform:uppercase">Shares</div><div style="font-size:14px">{t.get('shares','—')}</div></div>
-            <div><div style="font-size:10px;color:#7a7a72;text-transform:uppercase">Buy price</div><div style="font-size:14px">${float(t['premium']):.2f}</div></div>
-            <div><div style="font-size:10px;color:#7a7a72;text-transform:uppercase">Total cost</div><div style="font-size:18px">${float(t['total_premium']):.2f}</div></div>
-            <div><div style="font-size:10px;color:#7a7a72;text-transform:uppercase">Days held</div><div style="font-size:14px;color:#7a7a72">{dit}d</div></div>
-        </div>
-        {notes_html}
-        """
+            # Breakeven
+            if t.get("spot") and t["side"] == "Sell":
+                pps = float(t["total_premium"]) / (int(t.get("contracts", 1)) * 100)
+                be = float(t["spot"]) - pps if t["type"] == "Call" else float(t["strike"]) - pps
+                st.caption(f"Downside breakeven: ${be:.2f}")
+        else:
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Shares", t.get("shares", "—"))
+            c2.metric("Buy price", f"${float(t['premium']):.2f}")
+            c3.metric("Total cost", f"${float(t['total_premium']):.2f}")
+            c4.metric("Days held", f"{dit}d")
 
-    st.markdown(f"""
-    <div class="trade-card">
-        <div>{type_tag}{side_tag}<span style="float:right;font-size:11px;color:#7a7a72">{t['date']}</span></div>
-        {content}
-    </div>
-    """, unsafe_allow_html=True)
+        if t.get("notes"):
+            st.caption(f"✎ {t['notes']}")
 
-    col1, col2, col3 = st.columns([1, 1, 4])
-    with col1:
-        if st.button("Close position", key=f"close_{t['id']}"):
-            st.session_state[f"closing_{t['id']}"] = True
-    with col2:
-        if st.button("Delete", key=f"del_{t['id']}"):
-            delete_trade(t["id"])
-            st.rerun()
+        # Action buttons
+        col1, col2, col3, col_space = st.columns([1, 1, 1, 3])
+        with col1:
+            if st.button("Close", key=f"close_{t['id']}", type="primary"):
+                st.session_state[f"closing_{t['id']}"] = True
+                st.session_state[f"editing_{t['id']}"] = False
+        with col2:
+            if st.button("Edit", key=f"edit_{t['id']}"):
+                st.session_state[f"editing_{t['id']}"] = True
+                st.session_state[f"closing_{t['id']}"] = False
+        with col3:
+            if st.button("Delete", key=f"del_{t['id']}"):
+                delete_trade(t["id"])
+                st.rerun()
 
     if st.session_state.get(f"closing_{t['id']}"):
         render_close_form(t)
+    if st.session_state.get(f"editing_{t['id']}"):
+        render_edit_form(t)
+
+def render_edit_form(t):
+    is_opt = t["type"] != "Stock"
+    with st.form(key=f"edit_form_{t['id']}"):
+        st.markdown(f"**Edit: {t['symbol']} {t['side']} {t['type']}**")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            new_date = st.date_input("Open date", value=datetime.strptime(t["date"], "%Y-%m-%d").date())
+        with col2:
+            new_notes = st.text_input("Notes", value=t.get("notes", ""))
+
+        if is_opt:
+            col3, col4, col5 = st.columns(3)
+            with col3:
+                new_premium = st.number_input("Premium/ct ($)", value=float(t.get("premium", 0)), step=0.01)
+            with col4:
+                new_strike = st.number_input("Strike ($)", value=float(t.get("strike", 0)), step=0.5)
+            with col5:
+                new_contracts = st.number_input("Contracts", value=int(t.get("contracts", 1)), step=1)
+
+            new_expiry = st.date_input("Expiry", value=datetime.strptime(t["expiry"], "%Y-%m-%d").date() if t.get("expiry") else date.today())
+            new_spot = st.number_input("Stock price at open ($)", value=float(t.get("spot", 0)), step=0.01)
+        else:
+            col3, col4 = st.columns(2)
+            with col3:
+                new_price = st.number_input("Price/share ($)", value=float(t.get("premium", 0)), step=0.01)
+            with col4:
+                new_shares = st.number_input("Shares", value=int(t.get("shares", 100)), step=1)
+
+        col_sub, col_can = st.columns(2)
+        with col_sub:
+            submitted = st.form_submit_button("Save changes", type="primary")
+        with col_can:
+            cancelled = st.form_submit_button("Cancel")
+
+        if submitted:
+            updates = {"date": str(new_date), "notes": new_notes}
+            if is_opt:
+                total = new_premium * 100 * int(new_contracts)
+                ann = None
+                if new_spot > 0 and new_expiry:
+                    dte = (new_expiry - new_date).days
+                    if dte > 0:
+                        ann = (total / (new_spot * 100 * new_contracts)) * (365/dte) * 100
+                updates.update({
+                    "premium": float(new_premium),
+                    "strike": float(new_strike),
+                    "contracts": int(new_contracts),
+                    "expiry": str(new_expiry),
+                    "spot": float(new_spot),
+                    "total_premium": float(total),
+                    "annualized": round(ann, 2) if ann else t.get("annualized"),
+                })
+            else:
+                updates.update({
+                    "premium": float(new_price),
+                    "shares": int(new_shares),
+                    "total_premium": float(new_price * new_shares),
+                })
+            update_trade(t["id"], updates)
+            st.session_state.pop(f"editing_{t['id']}", None)
+            st.rerun()
+
+        if cancelled:
+            st.session_state.pop(f"editing_{t['id']}", None)
+            st.rerun()
 
 def render_close_form(t):
     is_opt = t["type"] != "Stock"
