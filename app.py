@@ -257,6 +257,63 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
+
+    # Export
+    export_data = {"tickers": tickers, "trades": all_trades}
+    import json
+    st.download_button(
+        label="↓ Export backup",
+        data=json.dumps(export_data, indent=2, default=str),
+        file_name=f"options_backup_{date.today()}.json",
+        mime="application/json",
+        use_container_width=True
+    )
+
+    # Import
+    uploaded = st.file_uploader("↑ Import backup", type="json", label_visibility="collapsed")
+    if uploaded:
+        try:
+            raw = json.loads(uploaded.read())
+            import_tickers = raw.get("tickers", [])
+            import_trades  = raw.get("trades", [])
+            st.warning(f"Import {len(import_trades)} trades for {len(import_tickers)} tickers?")
+            if st.button("Confirm import", use_container_width=True):
+                for sym in import_tickers:
+                    try:
+                        sb.table("tickers").insert({"symbol": sym}).execute()
+                    except: pass
+                for t in import_trades:
+                    # Map camelCase keys from HTML backup to snake_case
+                    mapped = {
+                        "id":            str(t.get("id", "")),
+                        "symbol":        t.get("symbol"),
+                        "type":          t.get("type"),
+                        "side":          t.get("side"),
+                        "date":          t.get("date"),
+                        "expiry":        t.get("expiry"),
+                        "strike":        t.get("strike"),
+                        "contracts":     t.get("contracts"),
+                        "shares":        t.get("shares"),
+                        "premium":       t.get("premium"),
+                        "total_premium": t.get("total_premium") or t.get("totalPremium"),
+                        "spot":          t.get("spot"),
+                        "annualized":    t.get("annualized"),
+                        "notes":         t.get("notes", ""),
+                        "closed":        t.get("closed", False),
+                        "closed_date":   t.get("closed_date") or t.get("closedDate"),
+                        "closed_price":  t.get("closed_price") or t.get("closedPrice"),
+                        "closed_pnl":    t.get("closed_pnl") or t.get("closedPnl"),
+                    }
+                    mapped = {k: v for k, v in mapped.items() if v is not None}
+                    try:
+                        sb.table("trades").upsert(mapped).execute()
+                    except: pass
+                st.success("Import complete!")
+                st.rerun()
+        except Exception as e:
+            st.error(f"Invalid backup file: {e}")
+
+    st.markdown("---")
     if st.button("Logout", use_container_width=True):
         st.session_state.authenticated = False
         st.rerun()
