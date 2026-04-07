@@ -245,7 +245,9 @@ with st.sidebar:
 
     for sym in tickers_sorted:
         sym_trades = [t for t in all_trades if t["symbol"] == sym]
-        open_prem = ticker_open_premium(sym)
+        open_prem = sum(float(t.get("total_premium") or 0)
+                        for t in sym_trades if not t.get("closed") and t["type"] != "Stock")
+        open_count = sum(1 for t in sym_trades if not t.get("closed"))
         closed_pnl = sum(float(t.get("closed_pnl") or 0) for t in sym_trades if t.get("closed"))
         prem_str = f"${open_prem:.0f}" if open_prem else "—"
         pnl_str = f"+${closed_pnl:.0f}" if closed_pnl > 0 else (f"-${abs(closed_pnl):.0f}" if closed_pnl < 0 else "")
