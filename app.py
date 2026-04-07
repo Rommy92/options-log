@@ -236,13 +236,12 @@ with st.sidebar:
     tickers = load_tickers()
     all_trades = load_trades()
 
-    # Sort tickers by open premium descending
-    def ticker_open_premium(sym):
-        return sum(float(t.get("total_premium") or 0)
-                   for t in all_trades
-                   if t["symbol"] == sym and not t.get("closed") and t["type"] != "Stock")
+    # Sort tickers by number of open trades descending
+    def ticker_open_count(sym):
+        return sum(1 for t in all_trades
+                   if t["symbol"] == sym and not t.get("closed"))
 
-    tickers_sorted = sorted(tickers, key=ticker_open_premium, reverse=True)
+    tickers_sorted = sorted(tickers, key=ticker_open_count, reverse=True)
 
     for sym in tickers_sorted:
         sym_trades = [t for t in all_trades if t["symbol"] == sym]
@@ -518,7 +517,8 @@ def render_ticker(sym):
                 dit = days_between(t["date"], t.get("closed_date", "")) if t.get("closed_date") else "—"
                 pnl = float(t.get("closed_pnl") or 0)
                 ann = f"{float(t['annualized']):.0f}%" if t.get("annualized") else "—"
-                label = f"{t['date']} · {t['type']} {t['side']} · {'$'+str(float(t.get('strike',0)))if is_opt else str(t.get('shares',''))+'sh'} · ${float(t['total_premium']):.2f} · P&L: {'+'if pnl>=0 else ''}${pnl:.2f}"
+                qty_str = f"${float(t['strike']):.0f} strike" if (is_opt and t.get("strike")) else (f"{t.get('shares','')}sh" if t.get("shares") else "")
+                label = f"{t['date']} · {t['type']} {t['side']} {qty_str} · ${float(t.get('total_premium',0)):.2f} · P&L: {'+'if pnl>=0 else ''}${pnl:.2f}"
                 with st.expander(label):
                     c1, c2, c3, c4, c5 = st.columns(5)
                     c1.metric("Type", f"{t['type']} {t['side']}")
