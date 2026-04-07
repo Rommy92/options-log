@@ -218,6 +218,8 @@ if "active_tab" not in st.session_state:
     st.session_state.active_tab = "dashboard"
 if "show_add_trade" not in st.session_state:
     st.session_state.show_add_trade = False
+if "show_quick_add" not in st.session_state:
+    st.session_state.show_quick_add = False
 
 # ── Sidebar ────────────────────────────────────────────────────────
 with st.sidebar:
@@ -476,13 +478,18 @@ def render_ticker(sym):
     cp           = fmt_proj(proj["closed_proj"], proj["closed_cycles"], proj["avg_c_dte"], proj["basis"])
     opP          = fmt_proj(proj["open_proj"],   proj["open_cycles"],   proj["avg_o_dte"], proj["basis"])
 
-    col_hdr, col_btn = st.columns([3, 1])
+    col_hdr, col_btn, col_btn2 = st.columns([3, 1, 1])
     with col_hdr:
         st.markdown(f"## {sym}")
         st.markdown(f"*{len(trades)} total · {len(open_trades)} open*")
     with col_btn:
-        if st.button("+ New trade", type="primary"):
+        if st.button("+ New trade", type="primary", use_container_width=True):
             st.session_state.show_add_trade = True
+            st.session_state.show_quick_add = False
+    with col_btn2:
+        if st.button("⚡ Quick log", use_container_width=True):
+            st.session_state.show_quick_add = True
+            st.session_state.show_add_trade = False
 
     tab1, tab2 = st.tabs(["Trade Log", "⟆ Screener"])
 
@@ -506,24 +513,32 @@ def render_ticker(sym):
         # Closed trades table
         st.markdown('<div class="section-title">Closed trades</div>', unsafe_allow_html=True)
         if closed_trades:
-            rows = []
             for t in closed_trades:
                 is_opt = t["type"] != "Stock"
                 dit = days_between(t["date"], t.get("closed_date", "")) if t.get("closed_date") else "—"
-                rows.append({
-                    "Date": t["date"],
-                    "Type": t["type"],
-                    "Side": t["side"],
-                    "Strike": f"${float(t['strike']):.2f}" if t.get("strike") else "—",
-                    "Expiry": t.get("expiry", "—"),
-                    "Qty": f"{t['contracts']}ct" if is_opt else f"{t.get('shares','')}sh",
-                    "Premium": f"${float(t['total_premium']):.2f}",
-                    "P&L": f"{'+'if float(t.get('closed_pnl',0))>=0 else ''}${float(t.get('closed_pnl',0)):.2f}",
-                    "DIT": f"{dit}d" if dit != "—" else "—",
-                    "Ann %": f"{float(t['annualized']):.0f}%" if t.get("annualized") else "—",
-                    "Notes": t.get("notes", ""),
-                })
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                pnl = float(t.get("closed_pnl") or 0)
+                ann = f"{float(t['annualized']):.0f}%" if t.get("annualized") else "—"
+                label = f"{t['date']} · {t['type']} {t['side']} · {'$'+str(float(t.get('strike',0)))if is_opt else str(t.get('shares',''))+'sh'} · ${float(t['total_premium']):.2f} · P&L: {'+'if pnl>=0 else ''}${pnl:.2f}"
+                with st.expander(label):
+                    c1, c2, c3, c4, c5 = st.columns(5)
+                    c1.metric("Type", f"{t['type']} {t['side']}")
+                    c2.metric("Total premium", f"${float(t['total_premium']):.2f}")
+                    c3.metric("P&L", f"{'+'if pnl>=0 else ''}${pnl:.2f}")
+                    c4.metric("DIT", f"{dit}d" if dit != "—" else "—")
+                    c5.metric("Ann %", ann)
+                    if t.get("notes"):
+                        st.caption(f"✎ {t['notes']}")
+                    col1, col2, col3 = st.columns([1, 1, 4])
+                    with col1:
+                        if st.button("Edit", key=f"edit_closed_{t['id']}"):
+                            st.session_state[f"editing_{t['id']}"] = True
+                            st.rerun()
+                    with col2:
+                        if st.button("Delete", key=f"del_closed_{t['id']}"):
+                            delete_trade(t["id"])
+                            st.rerun()
+                if st.session_state.get(f"editing_{t['id']}"):
+                    render_edit_form(t)
         else:
             st.info("No closed trades yet")
 
@@ -550,14 +565,27 @@ def render_trade_card(t, sym):
             c1.metric("Strike", f"${float(t['strike']):.2f}")
             c2.metric("Expiry", t.get("expiry", "—"))
             c3.metric("Contracts", t.get("contracts", 1))
-            c4.metric("Premium/ct", f"${float(t['premium']):.2f}")
+            c4.metric("Total premium", f"${float(t['total_premium']):.2f}")
 
             c5, c6, c7, c8 = st.columns(4)
-            c5.metric("Total premium", f"${float(t['total_premium']):.2f}")
-            c6.metric("Days to exp", f"{dte_left}d" if dte_left is not None else "—")
-            c7.metric("Days held", f"{dit}d")
+            c5.metric("Days to exp", f"{dte_left}d" if dte_left is not None else "—")
+            c6.metric("Days held", f"{dit}d")
             ann_str = f"{float(t['annualized']):.1f}%" if t.get("annualized") else "—"
-            c8.metric("Proj. annualized", ann_str)
+            c7.metric("Proj. annualized", ann_str)
+
+            # If assigned calc for sell calls
+            if t["side"] == "Sell" and t["type"] == "Call" and t.get("spot") and t.get("strike"):
+                spot = float(t["spot"]); strike = float(t["strike"])
+                contracts = int(t.get("contracts", 1))
+                total_prem = float(t["total_premium"])
+                stock_gain = (strike - spot) * 100 * contracts
+                total_profit = stock_gain + total_prem
+                raw_pct = total_profit / (spot * 100 * contracts) * 100
+                c8.metric("If assigned profit", f"${total_profit:.2f} ({raw_pct:.1f}%)")
+            elif t["side"] == "Sell" and t["type"] == "Put" and t.get("spot") and t.get("strike"):
+                strike = float(t["strike"]); prem_per_sh = float(t["total_premium"]) / (int(t.get("contracts",1)) * 100)
+                be = strike - prem_per_sh
+                c8.metric("Breakeven if assigned", f"${be:.2f}/sh")
 
             # Assignment risk
             if t.get("spot") and t.get("strike") and t["side"] == "Sell":
@@ -929,6 +957,58 @@ def render_screener(sym, trades):
         st.markdown(f"*{len(results)} contracts found · showing top {min(30,len(results))} by score · Score = 60% return + 40% OTM safety*")
         st.dataframe(df_res, use_container_width=True, hide_index=True)
 
+# ── Quick log form ─────────────────────────────────────────────────
+def render_quick_add(sym):
+    with st.form("quick_add_form"):
+        st.markdown(f"### ⚡ Quick log — {sym}")
+        st.caption("Log a already-closed trade in one step")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            trade_type = st.selectbox("Type", ["Call", "Put", "Stock"])
+        with col2:
+            side = st.selectbox("Side", ["Sell", "Buy"])
+        with col3:
+            trade_date = st.date_input("Trade date", value=date.today())
+
+        col4, col5, col6 = st.columns(3)
+        with col4:
+            total_premium = st.number_input("Premium collected ($)", min_value=0.0, step=1.0,
+                                             help="Total $ received e.g. $63")
+        with col5:
+            realized_pnl = st.number_input("Realized P&L ($)", step=1.0,
+                                            help="Profit or loss. Positive = profit, negative = loss")
+        with col6:
+            notes = st.text_input("Notes", placeholder="optional")
+
+        col_sub, col_can = st.columns(2)
+        with col_sub:
+            submitted = st.form_submit_button("Log trade", type="primary")
+        with col_can:
+            cancelled = st.form_submit_button("Cancel")
+
+        if submitted and total_premium >= 0:
+            trade = {
+                "id": str(uuid.uuid4()),
+                "symbol": sym,
+                "type": trade_type,
+                "side": side,
+                "date": str(trade_date),
+                "notes": notes,
+                "total_premium": float(total_premium),
+                "premium": float(total_premium),
+                "closed": True,
+                "closed_date": str(trade_date),
+                "closed_pnl": float(realized_pnl),
+            }
+            save_trade(trade)
+            st.session_state.show_quick_add = False
+            st.rerun()
+
+        if cancelled:
+            st.session_state.show_quick_add = False
+            st.rerun()
+
 # ── Main render ────────────────────────────────────────────────────
 if st.session_state.active_tab == "dashboard":
     render_dashboard()
@@ -936,5 +1016,7 @@ elif st.session_state.active_ticker:
     sym = st.session_state.active_ticker
     if st.session_state.show_add_trade:
         render_add_trade_form(sym)
+    elif st.session_state.show_quick_add:
+        render_quick_add(sym)
     else:
         render_ticker(sym)
