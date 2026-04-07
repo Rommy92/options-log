@@ -640,40 +640,49 @@ def render_edit_form(t):
 
         col1, col2 = st.columns(2)
         with col1:
-            new_date = st.date_input("Open date", value=datetime.strptime(t["date"], "%Y-%m-%d").date())
+            new_date = st.date_input("Open date", value=datetime.strptime(str(t["date"]), "%Y-%m-%d").date())
         with col2:
-            new_notes = st.text_input("Notes", value=t.get("notes", ""))
+            new_notes = st.text_input("Notes", value=t.get("notes") or "")
 
         if is_opt:
             col3, col4, col5 = st.columns(3)
             with col3:
-                new_premium = st.number_input("Premium/ct ($)", value=float(t.get("premium", 0)), step=0.01)
+                new_premium = st.number_input("Premium/ct ($)", value=float(t.get("premium") or 0), step=0.01)
             with col4:
-                new_strike = st.number_input("Strike ($)", value=float(t.get("strike", 0)), step=0.5)
+                new_strike = st.number_input("Strike ($)", value=float(t.get("strike") or 0), step=0.5)
             with col5:
-                new_contracts = st.number_input("Contracts", value=int(t.get("contracts", 1)), step=1)
+                new_contracts = st.number_input("Contracts", value=int(t.get("contracts") or 1), step=1)
 
-            new_expiry = st.date_input("Expiry", value=datetime.strptime(t["expiry"], "%Y-%m-%d").date() if t.get("expiry") else date.today())
-            new_spot = st.number_input("Stock price at open ($)", value=float(t.get("spot", 0)), step=0.01)
+            exp_val = date.today()
+            if t.get("expiry"):
+                try:
+                    exp_val = datetime.strptime(str(t["expiry"]), "%Y-%m-%d").date()
+                except: pass
+            new_expiry = st.date_input("Expiry", value=exp_val)
+            new_spot = st.number_input("Stock price at open ($)", value=float(t.get("spot") or 0), step=0.01)
         else:
             col3, col4 = st.columns(2)
             with col3:
-                new_price = st.number_input("Price/share ($)", value=float(t.get("premium", 0)), step=0.01)
+                new_price = st.number_input("Price/share ($)", value=float(t.get("premium") or 0), step=0.01)
             with col4:
-                new_shares = st.number_input("Shares", value=int(t.get("shares", 100)), step=1)
+                new_shares = st.number_input("Shares", value=int(t.get("shares") or 100), step=1)
 
-        col_sub, col_can = st.columns(2)
-        with col_sub:
-            submitted = st.form_submit_button("Save changes", type="primary")
-        with col_can:
-            cancelled = st.form_submit_button("Cancel")
+        # For quick-logged closed trades — allow editing P&L directly
+        new_pnl = None
+        if t.get("closed"):
+            new_pnl = st.number_input("Realized P&L ($)", value=float(t.get("closed_pnl") or 0), step=1.0)
+
+        submitted = st.form_submit_button("Save changes", type="primary")
+        cancelled = st.form_submit_button("Cancel")
 
         if submitted:
             updates = {"date": str(new_date), "notes": new_notes}
+            if new_pnl is not None:
+                updates["closed_pnl"] = float(new_pnl)
             if is_opt:
                 total = new_premium * 100 * int(new_contracts)
                 ann = None
-                if new_spot > 0 and new_expiry:
+                if new_spot > 0:
                     dte = (new_expiry - new_date).days
                     if dte > 0:
                         ann = (total / (new_spot * 100 * new_contracts)) * (365/dte) * 100
