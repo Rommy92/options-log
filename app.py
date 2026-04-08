@@ -184,7 +184,8 @@ def calc_projection(trades, symbol):
     closed_prems = [float(t["total_premium"] or 0) for t in closed_opts]
     avg_c_dte    = avg(closed_dtes)
     avg_c_prem   = avg(closed_prems)
-    closed_proj  = (avg_c_prem * (365 / avg_c_dte)) if avg_c_dte and avg_c_prem else None
+    # Require at least 3 closed options for meaningful projection
+    closed_proj  = (avg_c_prem * (365 / avg_c_dte)) if (avg_c_dte and avg_c_prem and len(closed_opts) >= 3) else None
     closed_cycles= (365 / avg_c_dte) if avg_c_dte else None
 
     open_dtes  = [days_between(t["date"], t["expiry"]) for t in open_opts if days_between(t["date"], t["expiry"]) > 0]
@@ -471,10 +472,11 @@ def render_ticker(sym):
     open_opts    = [t for t in open_trades if t["type"] != "Stock"]
 
     all_premium  = sum(float(t.get("total_premium") or 0) for t in trades if t["type"] != "Stock")
+    net_premium  = sum(float(t.get("closed_pnl") or 0) for t in closed_trades if t["type"] != "Stock")
     closed_pnl   = sum(float(t.get("closed_pnl") or 0) for t in closed_trades)
     open_premium = sum(float(t.get("total_premium") or 0) for t in open_opts)
     wins         = sum(1 for t in closed_trades if float(t.get("closed_pnl") or 0) > 0)
-    win_rate     = f"{wins/len(closed_trades)*100:.0f}%" if closed_trades else "—"
+    win_rate     = f"{wins/len(closed_trades)*100:.0f}% ({wins}/{len(closed_trades)})" if len(closed_trades) >= 3 else f"— (need 3+ trades)"
     proj         = calc_projection(trades, sym)
     cp           = fmt_proj(proj["closed_proj"], proj["closed_cycles"], proj["avg_c_dte"], proj["basis"])
     opP          = fmt_proj(proj["open_proj"],   proj["open_cycles"],   proj["avg_o_dte"], proj["basis"])
@@ -497,11 +499,14 @@ def render_ticker(sym):
     with tab1:
         c1, c2, c3, c4, c5, c6 = st.columns(6)
         c1.metric("Realized P&L", f"{'+'if closed_pnl>=0 else ''}${closed_pnl:.2f}")
-        c2.metric("All-time premium", f"${all_premium:.2f}")
-        c3.metric("Open premium", f"${open_premium:.2f}" if open_premium else "—")
-        c4.metric("Win rate", win_rate)
-        c5.metric("Proj/yr (history)", cp[0], cp[1])
-        c6.metric("Proj/yr (open)", opP[0], opP[1])
+        c2.metric("Gross premium", f"${all_premium:.2f}")
+        c3.metric("Net retained", f"{'+'if net_premium>=0 else ''}${net_premium:.2f}",
+                  help="P&L from closed options only")
+        c4.metric("Open premium", f"${open_premium:.2f}" if open_premium else "—")
+        c5.metric("Win rate", win_rate)
+        closed_opts_count = len([t for t in closed_trades if t["type"] != "Stock"])
+        proj_label = "Proj/yr (history)" if closed_opts_count >= 3 else f"Proj/yr (need {3-closed_opts_count} more)"
+        c6.metric(proj_label, cp[0] if closed_opts_count >= 3 else "—", cp[1] if closed_opts_count >= 3 else "")
 
         # Open positions
         st.markdown('<div class="section-title">Open positions</div>', unsafe_allow_html=True)
@@ -551,72 +556,103 @@ def render_trade_card(t, sym):
     is_opt = t["type"] != "Stock"
     dit = days_between(t["date"], str(date.today()))
     dte_left = days_between(str(date.today()), t.get("expiry", "")) if t.get("expiry") else None
+    total_dte = days_between(t["date"], t.get("expiry", "")) if t.get("expiry") else None
+
+    # Fetch live price
+    live_price = get_price(sym)
 
     with st.container(border=True):
-        # Header row
-        col_tags, col_date = st.columns([3, 1])
-        with col_tags:
-            type_color = {"Call": "🔵", "Put": "🟡", "Stock": "⚫"}
-            side_color = {"Sell": "🟢", "Buy": "🔴"}
-            st.markdown(f"**{type_color.get(t['type'],'')} {t['type']}** &nbsp; {side_color.get(t['side'],'')} {t['side']}")
-        with col_date:
+        # ── Header ──────────────────────────────────────────────
+        type_color = {"Call": "🔵", "Put": "🟡", "Stock": "⚫"}
+        side_color = {"Sell": "🟢", "Buy": "🔴"}
+        h1, h2 = st.columns([4, 1])
+        with h1:
+            live_str = f"&nbsp;&nbsp;|&nbsp;&nbsp; 📈 **${live_price:.2f}**" if live_price else ""
+            st.markdown(f"**{type_color.get(t['type'],'')} {t['type']}** &nbsp; {side_color.get(t['side'],'')} {t['side']}{live_str}", unsafe_allow_html=True)
+        with h2:
             st.caption(t["date"])
 
         if is_opt:
-            c1, c2, c3, c4 = st.columns(4)
+            # ── Row 1: key numbers compact ───────────────────────
+            c1, c2, c3, c4, c5, c6 = st.columns(6)
             c1.metric("Strike", f"${float(t['strike']):.2f}")
             c2.metric("Expiry", t.get("expiry", "—"))
             c3.metric("Contracts", t.get("contracts", 1))
             c4.metric("Total premium", f"${float(t['total_premium']):.2f}")
-
-            c5, c6, c7, c8 = st.columns(4)
-            c5.metric("Days to exp", f"{dte_left}d" if dte_left is not None else "—")
-            c6.metric("Days held", f"{dit}d")
             ann_str = f"{float(t['annualized']):.1f}%" if t.get("annualized") else "—"
-            c7.metric("Proj. annualized", ann_str)
+            c5.metric("Proj. ann.", ann_str)
+            c6.metric("DTE left", f"{dte_left}d" if dte_left is not None else "—")
 
-            # If assigned calc for sell calls
-            if t["side"] == "Sell" and t["type"] == "Call" and t.get("spot") and t.get("strike"):
-                spot = float(t["spot"]); strike = float(t["strike"])
-                contracts = int(t.get("contracts", 1))
-                total_prem = float(t["total_premium"])
-                stock_gain = (strike - spot) * 100 * contracts
-                total_profit = stock_gain + total_prem
-                raw_pct = total_profit / (spot * 100 * contracts) * 100
-                c8.metric("If assigned profit", f"${total_profit:.2f} ({raw_pct:.1f}%)")
-            elif t["side"] == "Sell" and t["type"] == "Put" and t.get("spot") and t.get("strike"):
-                strike = float(t["strike"]); prem_per_sh = float(t["total_premium"]) / (int(t.get("contracts",1)) * 100)
-                be = strike - prem_per_sh
-                c8.metric("Breakeven if assigned", f"${be:.2f}/sh")
+            # ── Row 2: risk / assignment ─────────────────────────
+            r2_cols = st.columns(6)
 
-            # Assignment risk
-            if t.get("spot") and t.get("strike") and t["side"] == "Sell":
-                spot = float(t["spot"]); strike = float(t["strike"])
-                dist = (strike - spot) if t["type"] == "Call" else (spot - strike)
-                dist_pct = dist / spot * 100
-                sign = "+" if dist >= 0 else ""
-                color = "normal" if dist_pct > 10 else ("off" if dist_pct > 4 else "inverse")
-                st.metric("Distance to strike", f"{sign}${abs(dist):.2f} ({sign}{dist_pct:.1f}%)", delta_color=color)
+            # Distance to strike using LIVE price if available
+            if t.get("strike") and t["side"] == "Sell":
+                ref_price = live_price if live_price else float(t.get("spot") or 0)
+                if ref_price:
+                    strike = float(t["strike"])
+                    dist = (strike - ref_price) if t["type"] == "Call" else (ref_price - strike)
+                    dist_pct = dist / ref_price * 100
+                    sign = "+" if dist >= 0 else ""
+                    color = "normal" if dist_pct > 10 else ("off" if dist_pct > 4 else "inverse")
+                    label = "live" if live_price else "entry"
+                    r2_cols[0].metric(f"Distance to strike ({label})", f"{sign}${abs(dist):.2f}", f"{sign}{dist_pct:.1f}%", delta_color=color)
 
             # Breakeven
             if t.get("spot") and t["side"] == "Sell":
                 pps = float(t["total_premium"]) / (int(t.get("contracts", 1)) * 100)
                 be = float(t["spot"]) - pps if t["type"] == "Call" else float(t["strike"]) - pps
-                st.caption(f"Downside breakeven: ${be:.2f}")
+                ref = live_price or float(t["spot"])
+                drop_pct = (ref - be) / ref * 100 if ref else 0
+                r2_cols[1].metric("Breakeven", f"${be:.2f}", f"stock drops {drop_pct:.1f}% to lose")
+
+            # If assigned profit using LIVE price
+            if t["side"] == "Sell" and t["type"] == "Call" and t.get("strike"):
+                entry = live_price or float(t.get("spot") or 0)
+                if entry:
+                    strike = float(t["strike"])
+                    contracts = int(t.get("contracts", 1))
+                    total_prem = float(t["total_premium"])
+                    stock_gain = (strike - entry) * 100 * contracts
+                    total_profit = stock_gain + total_prem
+                    raw_pct = total_profit / (entry * 100 * contracts) * 100
+                    label = "live" if live_price else "entry"
+                    r2_cols[2].metric(f"If assigned ({label})", f"${total_profit:.0f}", f"{raw_pct:.1f}% return")
+            elif t["side"] == "Sell" and t["type"] == "Put" and t.get("strike"):
+                prem_per_sh = float(t["total_premium"]) / (int(t.get("contracts", 1)) * 100)
+                be = float(t["strike"]) - prem_per_sh
+                r2_cols[2].metric("Breakeven if assigned", f"${be:.2f}/sh")
+
+            # Theta decay progress
+            if total_dte and total_dte > 0 and dte_left is not None:
+                elapsed = total_dte - dte_left
+                pct_elapsed = elapsed / total_dte * 100
+                # Theta decay is non-linear — roughly sqrt for approximation
+                pct_decayed = (pct_elapsed / 100) ** 0.5 * 100
+                r2_cols[3].metric("Time elapsed", f"{elapsed}d of {total_dte}d", f"~{pct_decayed:.0f}% premium decayed")
+
+            r2_cols[4].metric("Days held", f"{dit}d")
+
         else:
-            c1, c2, c3, c4 = st.columns(4)
+            # ── Stock card compact ───────────────────────────────
+            c1, c2, c3, c4, c5 = st.columns(5)
             c1.metric("Shares", t.get("shares", "—"))
             c2.metric("Buy price", f"${float(t['premium']):.2f}")
             c3.metric("Total cost", f"${float(t['total_premium']):.2f}")
             c4.metric("Days held", f"{dit}d")
+            if live_price:
+                unreal = (live_price - float(t["premium"])) * int(t.get("shares", 0))
+                unreal_pct = (live_price - float(t["premium"])) / float(t["premium"]) * 100
+                c5.metric("Unrealized P&L", f"${unreal:.0f}", f"{unreal_pct:+.1f}%",
+                           delta_color="normal" if unreal >= 0 else "inverse")
 
         if t.get("notes"):
             st.caption(f"✎ {t['notes']}")
 
-        # Action buttons
+        # ── Action buttons ───────────────────────────────────────
         col1, col2, col3, col_space = st.columns([1, 1, 1, 3])
         with col1:
-            if st.button("Close", key=f"close_{t['id']}", type="primary"):
+            if st.button("✓ Close", key=f"close_{t['id']}"):
                 st.session_state[f"closing_{t['id']}"] = True
                 st.session_state[f"editing_{t['id']}"] = False
         with col2:
