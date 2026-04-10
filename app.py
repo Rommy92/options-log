@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import plotly.graph_objects as go
 import yfinance as yf
 from supabase import create_client
 from datetime import date, datetime, timedelta
@@ -88,6 +89,57 @@ div[data-testid="metric-container"] {
     margin-top: 2px;
     font-family: 'JetBrains Mono', monospace;
 }
+
+/* ── Trade cards ── */
+.trade-card {
+    background: #1a1a17;
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 8px;
+    padding: 12px 14px;
+    position: relative;
+}
+.trade-card.call  { border-top: 2px solid rgba(112,168,232,0.5); }
+.trade-card.put   { border-top: 2px solid rgba(240,192,60,0.5); }
+.trade-card.stock { border-top: 2px solid rgba(120,120,110,0.4); }
+
+.card-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    line-height: 1.3;
+}
+.card-title.call  { color: #70a8e8; }
+.card-title.put   { color: #f0c03c; }
+.card-title.stock { color: #888880; }
+
+.card-rows { display: flex; flex-direction: column; gap: 0; }
+.card-row {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px;
+    align-items: baseline;
+    padding: 3px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+.card-row:last-child { border-bottom: none; }
+.card-row-label {
+    font-size: 12px;
+    color: #4a4a42;
+    white-space: nowrap;
+}
+.card-row-value {
+    font-size: 13px;
+    font-family: 'JetBrains Mono', monospace;
+    color: #c8c6bf;
+    text-align: left;
+}
+.card-row-value.amber { color: #f0c03c; }
+.card-row-value.green { color: #a8d472; }
+.card-row-value.red   { color: #e87070; }
+.card-row-value.blue  { color: #70a8e8; }
+.card-row-value.muted { color: #4a4a42; }
 
 /* ── Section title ── */
 .section-title {
@@ -211,106 +263,6 @@ hr { border-color: rgba(255,255,255,0.05) !important; }
 /* ── Hide branding ── */
 #MainMenu { visibility: hidden; }
 footer { visibility: hidden; }
-
-/* ── Open positions row UI ── */
-.position-row {
-    background: #141412;
-    border: 1px solid rgba(255,255,255,0.05);
-    border-radius: 8px;
-    padding: 14px 16px;
-    margin-bottom: 10px;
-}
-.position-grid {
-    display: grid;
-    grid-template-columns: 70px 70px 90px 115px 95px 95px 110px 85px 85px 100px 120px 110px;
-    gap: 12px;
-    align-items: start;
-}
-.pos-col {
-    min-width: 0;
-}
-.pos-label {
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: #3a3a32;
-    margin-bottom: 3px;
-}
-.pos-value {
-    font-size: 13px;
-    font-family: 'JetBrains Mono', monospace;
-    color: #c8c6bf;
-    line-height: 1.25;
-    word-break: break-word;
-}
-.pos-green { color: #a8d472; }
-.pos-red   { color: #e87070; }
-.pos-amber { color: #f0c03c; }
-.pos-blue  { color: #70a8e8; }
-.pos-muted { color: #5a5a52; }
-
-.badge {
-    font-size: 10px;
-    padding: 3px 6px;
-    border-radius: 4px;
-    display: inline-block;
-    font-weight: 600;
-    line-height: 1;
-}
-.badge.call  { background: rgba(112,168,232,0.15); color:#70a8e8; }
-.badge.put   { background: rgba(240,192,60,0.15); color:#f0c03c; }
-.badge.stock { background: rgba(255,255,255,0.08); color:#888880; }
-
-.badge.sell { background: rgba(168,212,114,0.15); color:#a8d472; }
-.badge.buy  { background: rgba(232,112,112,0.15); color:#e87070; }
-
-.pos-row-top {
-    display:flex;
-    justify-content:space-between;
-    align-items:flex-start;
-    margin-bottom:10px;
-    gap: 12px;
-}
-.pos-date {
-    font-size:10px;
-    color:#4a4a42;
-    font-family:'JetBrains Mono', monospace;
-    white-space:nowrap;
-}
-.pos-actions {
-    display:flex;
-    gap:8px;
-    justify-content:flex-end;
-    margin-top: 12px;
-}
-.pos-actions .stButton {
-    flex: 1;
-}
-
-/* Details table */
-.detail-grid {
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 12px;
-}
-.detail-box {
-    background: rgba(255,255,255,0.02);
-    border: 1px solid rgba(255,255,255,0.04);
-    border-radius: 6px;
-    padding: 10px 12px;
-}
-.detail-label {
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: #3a3a32;
-    margin-bottom: 4px;
-}
-.detail-value {
-    font-size: 13px;
-    font-family: 'JetBrains Mono', monospace;
-    color: #c8c6bf;
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -428,34 +380,24 @@ def calc_projection(trades, symbol):
     opts = [t for t in trades if t["symbol"] == symbol and t["type"] != "Stock"]
     closed_opts = [t for t in opts if t.get("closed") and t.get("closed_date")]
     open_opts   = [t for t in opts if not t.get("closed") and t.get("expiry")]
-
-    def avg(lst):
-        return sum(lst) / len(lst) if lst else None
-
+    def avg(lst): return sum(lst) / len(lst) if lst else None
     closed_dtes  = [days_between(t["date"], t["closed_date"]) for t in closed_opts if days_between(t["date"], t["closed_date"]) > 0]
     closed_prems = [float(t["total_premium"] or 0) for t in closed_opts]
     avg_c_dte    = avg(closed_dtes)
     avg_c_prem   = avg(closed_prems)
     closed_proj  = (avg_c_prem * (365 / avg_c_dte)) if (avg_c_dte and avg_c_prem and len(closed_opts) >= 3) else None
     closed_cycles= (365 / avg_c_dte) if avg_c_dte else None
-
     open_dtes  = [days_between(t["date"], t["expiry"]) for t in open_opts if days_between(t["date"], t["expiry"]) > 0]
     open_prems = [float(t["total_premium"] or 0) for t in open_opts]
     avg_o_dte  = avg(open_dtes)
     avg_o_prem = avg(open_prems)
     open_proj  = (avg_o_prem * (365 / avg_o_dte)) if avg_o_dte and avg_o_prem else None
     open_cycles= (365 / avg_o_dte) if avg_o_dte else None
-
     stock = next((t for t in trades if t["symbol"] == symbol and t["type"] == "Stock" and t["side"] == "Buy" and not t.get("closed")), None)
     basis = float(stock["premium"]) * float(stock.get("shares", 100)) if stock else None
-
     return {
-        "closed_proj": closed_proj,
-        "closed_cycles": closed_cycles,
-        "avg_c_dte": avg_c_dte,
-        "open_proj": open_proj,
-        "open_cycles": open_cycles,
-        "avg_o_dte": avg_o_dte,
+        "closed_proj": closed_proj, "closed_cycles": closed_cycles, "avg_c_dte": avg_c_dte,
+        "open_proj": open_proj,     "open_cycles": open_cycles,     "avg_o_dte": avg_o_dte,
         "basis": basis
     }
 
@@ -469,11 +411,8 @@ def fmt_proj(proj_val, cycles, dte, basis):
 
 # ── Stat cols helper ───────────────────────────────────────────────
 _STAT_COLORS = {
-    "amber": "#f0c03c",
-    "green": "#a8d472",
-    "red": "#e87070",
-    "white": "#e8e6df",
-    "muted": "#4a4a42",
+    "amber": "#f0c03c", "green": "#a8d472",
+    "red": "#e87070",   "white": "#e8e6df", "muted": "#4a4a42",
 }
 
 def render_stat_cols(stats):
@@ -490,10 +429,8 @@ def render_stat_cols(stats):
 
 # ── Session state ──────────────────────────────────────────────────
 for key, default in [
-    ("active_ticker", None),
-    ("active_tab", "dashboard"),
-    ("show_add_trade", False),
-    ("show_quick_add", False),
+    ("active_ticker", None), ("active_tab", "dashboard"),
+    ("show_add_trade", False), ("show_quick_add", False),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -528,33 +465,23 @@ with st.sidebar:
         closed_pnl_sym = sum(float(t.get("closed_pnl") or 0) for t in sym_trades if t.get("closed"))
         is_active      = st.session_state.active_ticker == sym
 
-        prem_label = (
-            f"${open_prem:,.0f}" if open_prem else
-            f"+${closed_pnl_sym:,.0f}" if closed_pnl_sym > 0 else
-            f"-${abs(closed_pnl_sym):,.0f}" if closed_pnl_sym < 0 else "—"
-        )
+        prem_label = (f"${open_prem:,.0f}" if open_prem else
+                      f"+${closed_pnl_sym:,.0f}" if closed_pnl_sym > 0 else
+                      f"-${abs(closed_pnl_sym):,.0f}" if closed_pnl_sym < 0 else "—")
 
         col_sym, col_del = st.columns([5, 1])
         with col_sym:
-            if st.button(
-                f"{sym}   {open_count} open · {prem_label}",
-                key=f"ticker_{sym}",
-                use_container_width=True,
-                type="primary" if is_active else "secondary"
-            ):
+            if st.button(f"{sym}   {open_count} open · {prem_label}",
+                         key=f"ticker_{sym}", use_container_width=True,
+                         type="primary" if is_active else "secondary"):
                 st.session_state.active_ticker = sym
                 st.session_state.active_tab = "log"
                 st.session_state.show_add_trade = False
                 st.session_state.show_quick_add = False
                 st.rerun()
-
         with col_del:
-            if st.button(
-                "✕",
-                key=f"del_ticker_{sym}",
-                use_container_width=True,
-                help=f"Remove {sym} and all its trades"
-            ):
+            if st.button("✕", key=f"del_ticker_{sym}", use_container_width=True,
+                         help=f"Remove {sym} and all its trades"):
                 st.session_state[f"confirm_del_ticker_{sym}"] = True
                 st.rerun()
 
@@ -593,7 +520,6 @@ with st.sidebar:
         mime="application/json",
         use_container_width=True
     )
-
     uploaded = st.file_uploader("Import JSON", type="json", label_visibility="collapsed")
     if uploaded:
         try:
@@ -603,36 +529,25 @@ with st.sidebar:
             st.warning(f"Import {len(import_trades)} trades for {len(import_tickers)} tickers?")
             if st.button("Confirm import", use_container_width=True):
                 for sym in import_tickers:
-                    try:
-                        sb.table("tickers").insert({"symbol": sym}).execute()
-                    except:
-                        pass
+                    try: sb.table("tickers").insert({"symbol": sym}).execute()
+                    except: pass
                 for t in import_trades:
                     mapped = {
-                        "id": str(t.get("id", "")),
-                        "symbol": t.get("symbol"),
-                        "type": t.get("type"),
-                        "side": t.get("side"),
-                        "date": t.get("date"),
-                        "expiry": t.get("expiry"),
-                        "strike": t.get("strike"),
-                        "contracts": t.get("contracts"),
-                        "shares": t.get("shares"),
-                        "premium": t.get("premium"),
+                        "id": str(t.get("id", "")), "symbol": t.get("symbol"),
+                        "type": t.get("type"), "side": t.get("side"),
+                        "date": t.get("date"), "expiry": t.get("expiry"),
+                        "strike": t.get("strike"), "contracts": t.get("contracts"),
+                        "shares": t.get("shares"), "premium": t.get("premium"),
                         "total_premium": t.get("total_premium") or t.get("totalPremium"),
-                        "spot": t.get("spot"),
-                        "annualized": t.get("annualized"),
-                        "notes": t.get("notes", ""),
-                        "closed": t.get("closed", False),
+                        "spot": t.get("spot"), "annualized": t.get("annualized"),
+                        "notes": t.get("notes", ""), "closed": t.get("closed", False),
                         "closed_date":  t.get("closed_date")  or t.get("closedDate"),
                         "closed_price": t.get("closed_price") or t.get("closedPrice"),
                         "closed_pnl":   t.get("closed_pnl")   or t.get("closedPnl"),
                     }
                     mapped = {k: v for k, v in mapped.items() if v is not None}
-                    try:
-                        sb.table("trades").upsert(mapped).execute()
-                    except:
-                        pass
+                    try: sb.table("trades").upsert(mapped).execute()
+                    except: pass
                 st.success("Import complete!")
                 st.rerun()
         except Exception as e:
@@ -665,10 +580,11 @@ def render_dashboard():
         ("Realized P&L",     pnl_str,                                          pnl_color, None),
         ("All-time Premium", f"${total_premium:,.2f}",                         "white",   None),
         ("Open at Risk",     f"${open_premium:,.2f}" if open_premium else "—", "amber",   None),
-        ("Win Rate",         win_rate,                                         "white",   f"{wins}/{len(closed)} trades"),
-        ("Avg Open Ann.",    avg_ann,                                          "amber",   None),
+        ("Win Rate",         win_rate,                                          "white",   f"{wins}/{len(closed)} trades"),
+        ("Avg Open Ann.",    avg_ann,                                           "amber",   None),
     ])
 
+    # Monthly cards
     st.markdown('<div class="section-title">Monthly premium collected — last 12 months</div>', unsafe_allow_html=True)
     monthly = {}
     for t in trades:
@@ -702,6 +618,7 @@ def render_dashboard():
     </div>
 </div>""", unsafe_allow_html=True)
 
+    # Open positions table
     st.markdown('<div class="section-title">Open positions</div>', unsafe_allow_html=True)
     if open_opts:
         rows = []
@@ -720,8 +637,7 @@ def render_dashboard():
                 dist_pct = dist / price * 100
                 dist_str = "ITM ⚠" if dist <= 0 else f"+{dist_pct:.1f}% (${abs(dist):.2f})"
             rows.append({
-                "Symbol": sym,
-                "Type": t["type"],
+                "Symbol": sym, "Type": t["type"],
                 "Ann %": f"{ann:.1f}%" if ann else "—",
                 "Strike": f"${float(t['strike']):.2f}" if t.get("strike") else "—",
                 "Expiry": t.get("expiry", "—"),
@@ -734,6 +650,7 @@ def render_dashboard():
     else:
         st.markdown('<div style="color:#3a3a32;font-size:12px;padding:12px 0">No open positions</div>', unsafe_allow_html=True)
 
+    # Per-ticker summary
     st.markdown('<div class="section-title">Per-ticker summary</div>', unsafe_allow_html=True)
     ticker_rows = []
     for sym in tickers:
@@ -746,223 +663,124 @@ def render_dashboard():
         cp   = fmt_proj(proj["closed_proj"], proj["closed_cycles"], proj["avg_c_dte"], proj["basis"])
         opP  = fmt_proj(proj["open_proj"],   proj["open_cycles"],   proj["avg_o_dte"], proj["basis"])
         ticker_rows.append({
-            "Ticker": sym,
-            "Trades": len(sym_trades),
-            "Open": len(sym_open),
+            "Ticker": sym, "Trades": len(sym_trades), "Open": len(sym_open),
             "Open premium": f"${op:.2f}" if op else "—",
             "Realized P&L": f"{'+'if pnl>=0 else ''}${pnl:.2f}",
-            "Proj/yr (hist)": cp[0],
-            "% basis": cp[1],
-            "Proj/yr (open)": opP[0],
-            "% basis (open)": opP[1],
+            "Proj/yr (hist)": cp[0], "% basis": cp[1],
+            "Proj/yr (open)": opP[0], "% basis (open)": opP[1],
         })
     if ticker_rows:
         st.dataframe(pd.DataFrame(ticker_rows), use_container_width=True, hide_index=True)
 
-# ── Open position row UI ───────────────────────────────────────────
-def render_position_row(t, live_price):
-    is_opt = t["type"] != "Stock"
-    type_class = t["type"].lower()
-    side_class = t["side"].lower()
-
-    dit = days_between(t["date"], str(date.today()))
-    date_str = t.get("date", "")
+# ── Trade card HTML ────────────────────────────────────────────────
+def build_card_html(t, live_price):
+    is_opt    = t["type"] != "Stock"
+    typ       = t["type"].lower()
+    dit       = days_between(t["date"], str(date.today()))
+    dte_left  = days_between(str(date.today()), t.get("expiry", "")) if t.get("expiry") else None
+    total_dte = days_between(t["date"], t.get("expiry", "")) if t.get("expiry") else None
 
     if is_opt:
-        strike = float(t.get("strike") or 0)
-        contracts = int(t.get("contracts") or 0)
-        expiry = t.get("expiry", "—")
-        premium_ct = float(t.get("premium") or 0)
-        total_premium = float(t.get("total_premium") or 0)
-        dte = days_between(str(date.today()), expiry) if expiry else None
-        ann = f"{float(t.get('annualized') or 0):.1f}%" if t.get("annualized") else "—"
-
-        if live_price and strike:
-            dist = (strike - live_price) if t["type"] == "Call" else (live_price - strike)
-            pct = dist / live_price * 100
-            dist_str = f"+${abs(dist):.2f} ({pct:+.1f}%)" if dist > 0 else "ITM ⚠"
-            dist_cls = "pos-green" if dist > 0 else "pos-red"
-        else:
-            dist_str = "—"
-            dist_cls = "pos-muted"
-
-        be = "—"
-        if t.get("total_premium") and contracts:
-            per_share = total_premium / (contracts * 100)
-            if t["type"] == "Call" and t.get("spot"):
-                be = f"${float(t.get('spot')) - per_share:.2f}"
-            elif t["type"] == "Put":
-                be = f"${strike - per_share:.2f}"
-
-        if_assigned = "—"
-        if t["side"] == "Sell" and t["type"] == "Call" and strike and live_price:
-            total_profit = ((strike - live_price) * 100 * contracts) + total_premium
-            raw_pct = total_profit / (live_price * 100 * contracts) * 100 if live_price else 0
-            if_assigned = f"{'+' if total_profit >= 0 else ''}${total_profit:.0f} ({raw_pct:.1f}%)"
-            assigned_cls = "pos-green" if total_profit >= 0 else "pos-red"
-        elif t["side"] == "Sell" and t["type"] == "Put" and strike and contracts:
-            per_share = total_premium / (contracts * 100)
-            if_assigned = f"${strike - per_share:.2f}/sh"
-            assigned_cls = "pos-amber"
-        else:
-            assigned_cls = "pos-muted"
-
-        grid_html = f"""
-        <div class="position-grid">
-            <div class="pos-col">
-                <div class="pos-label">Type</div>
-                <div><span class="badge {type_class}">{t["type"]}</span></div>
-            </div>
-            <div class="pos-col">
-                <div class="pos-label">Side</div>
-                <div><span class="badge {side_class}">{t["side"]}</span></div>
-            </div>
-            <div class="pos-col">
-                <div class="pos-label">Strike</div>
-                <div class="pos-value">${strike:.0f}</div>
-            </div>
-            <div class="pos-col">
-                <div class="pos-label">Expiry</div>
-                <div class="pos-value">{expiry}</div>
-            </div>
-            <div class="pos-col">
-                <div class="pos-label">Contracts</div>
-                <div class="pos-value">{contracts}</div>
-            </div>
-            <div class="pos-col">
-                <div class="pos-label">Premium / ct</div>
-                <div class="pos-value pos-amber">${premium_ct:.2f}</div>
-            </div>
-            <div class="pos-col">
-                <div class="pos-label">Total premium</div>
-                <div class="pos-value pos-green">${total_premium:.2f}</div>
-            </div>
-            <div class="pos-col">
-                <div class="pos-label">Days to exp</div>
-                <div class="pos-value">{f"{dte}d" if dte is not None else "—"}</div>
-            </div>
-            <div class="pos-col">
-                <div class="pos-label">Days held</div>
-                <div class="pos-value">{dit}d</div>
-            </div>
-            <div class="pos-col">
-                <div class="pos-label">Proj. annualized</div>
-                <div class="pos-value pos-blue">{ann}</div>
-            </div>
-            <div class="pos-col">
-                <div class="pos-label">Distance to strike</div>
-                <div class="pos-value {dist_cls}">{dist_str}</div>
-            </div>
-            <div class="pos-col">
-                <div class="pos-label">Downside breakeven</div>
-                <div class="pos-value">{be}</div>
-            </div>
-        </div>
-        """
-        details = {
-            "Open Date": date_str or "—",
-            "Live Price": f"${live_price:.2f}" if live_price else "—",
-            "Spot at Open": f"${float(t.get('spot')):.2f}" if t.get("spot") else "—",
-            "If Assigned": if_assigned,
-            "Notes": t.get("notes") or "—",
-        }
-        detail_classes = {
-            "If Assigned": assigned_cls
-        }
+        contracts = t.get("contracts", 1)
+        strike    = float(t.get("strike", 0))
+        expiry    = t.get("expiry", "")
+        side_lbl  = "COVERED CALL" if t["type"] == "Call" else "CASH-SECURED PUT"
+        title     = f"{side_lbl} · {contracts}× @{strike:.0f} · {expiry}"
     else:
-        shares = int(t.get("shares") or 0)
-        buy_price = float(t.get("premium") or 0)
-        total_cost = float(t.get("total_premium") or 0)
+        shares = t.get("shares", 0)
+        price  = float(t.get("premium", 0))
+        title  = f"STOCK · {shares} SH @ ${price:.2f}"
 
-        unrealized = "—"
-        unrealized_cls = "pos-muted"
+    rows = []
+
+    if is_opt:
+        prem = float(t.get("total_premium", 0))
+        rows.append(("Total premium",    f'<span class="card-row-value amber">${prem:,.2f}</span>'))
+        dte_str = f"{dte_left}d" if dte_left is not None else "—"
+        rows.append(("DTE",              f'<span class="card-row-value white">{dte_str}</span>'))
+        ann_str   = f"{float(t['annualized']):.1f}%" if t.get("annualized") else "—"
+        ann_color = "amber" if t.get("annualized") else "muted"
+        rows.append(("Proj. ann.",       f'<span class="card-row-value {ann_color}">{ann_str}</span>'))
+        spot_str   = f"${live_price:.2f}" if live_price else "—"
+        spot_color = "white" if live_price else "muted"
+        rows.append(("Spot (live)",      f'<span class="card-row-value {spot_color}">{spot_str}</span>'))
+
+        if live_price and t.get("strike") and t["side"] == "Sell":
+            strike     = float(t["strike"])
+            dist       = (strike - live_price) if t["type"] == "Call" else (live_price - strike)
+            dist_pct   = dist / live_price * 100
+            itm        = dist <= 0
+            dist_val   = "ITM ⚠" if itm else f"+${abs(dist):.2f} ({dist_pct:+.1f}%)"
+            dist_color = "red" if itm else ("green" if dist_pct > 10 else "amber")
+            rows.append(("Δ to strike",  f'<span class="card-row-value {dist_color}">{dist_val}</span>'))
+        else:
+            rows.append(("Δ to strike",  '<span class="card-row-value muted">—</span>'))
+
+        if t.get("spot") and t.get("total_premium") and t.get("contracts") and t["side"] == "Sell":
+            pps = float(t["total_premium"]) / (int(t.get("contracts", 1)) * 100)
+            be  = float(t["spot"]) - pps if t["type"] == "Call" else float(t["strike"]) - pps
+            rows.append(("Breakeven",    f'<span class="card-row-value white">${be:.2f}</span>'))
+        else:
+            rows.append(("Breakeven",    '<span class="card-row-value muted">—</span>'))
+
+        if t["side"] == "Sell" and t["type"] == "Call" and t.get("strike") and live_price:
+            entry        = live_price
+            strike       = float(t["strike"])
+            contracts    = int(t.get("contracts", 1))
+            total_prem   = float(t["total_premium"])
+            stock_gain   = (strike - entry) * 100 * contracts
+            total_profit = stock_gain + total_prem
+            raw_pct      = total_profit / (entry * 100 * contracts) * 100
+            color        = "green" if total_profit >= 0 else "red"
+            sign         = "+" if total_profit >= 0 else ""
+            rows.append(("If assigned",  f'<span class="card-row-value {color}">{sign}${total_profit:.0f} ({raw_pct:.1f}%)</span>'))
+        elif t["side"] == "Sell" and t["type"] == "Put" and t.get("strike") and t.get("total_premium") and t.get("contracts"):
+            prem_per_sh = float(t["total_premium"]) / (int(t.get("contracts", 1)) * 100)
+            be = float(t["strike"]) - prem_per_sh
+            rows.append(("If assigned",  f'<span class="card-row-value white">${be:.2f}/sh</span>'))
+        else:
+            rows.append(("If assigned",  '<span class="card-row-value muted">—</span>'))
+
+        if total_dte and total_dte > 0 and dte_left is not None:
+            elapsed     = total_dte - dte_left
+            pct_elapsed = elapsed / total_dte * 100
+            pct_decayed = (pct_elapsed / 100) ** 0.5 * 100
+            rows.append(("Time elapsed", f'<span class="card-row-value white">{elapsed}d of {total_dte}d (~{pct_decayed:.0f}% decayed)</span>'))
+
+        rows.append(("Days held",        f'<span class="card-row-value white">{dit}d</span>'))
+
+    else:
+        buy_price  = float(t.get("premium", 0))
+        total_cost = float(t.get("total_premium", 0))
+        shares     = int(t.get("shares", 0))
+        rows.append(("Buy price",    f'<span class="card-row-value amber">${buy_price:.2f}/sh</span>'))
+        rows.append(("Total cost",   f'<span class="card-row-value white">${total_cost:,.2f}</span>'))
+        rows.append(("Shares",       f'<span class="card-row-value white">{shares}</span>'))
+        rows.append(("Days held",    f'<span class="card-row-value white">{dit}d</span>'))
         if live_price:
-            upl = (live_price - buy_price) * shares
-            upl_pct = ((live_price - buy_price) / buy_price * 100) if buy_price else 0
-            unrealized = f"{'+' if upl >= 0 else ''}${upl:.0f} ({upl_pct:+.1f}%)"
-            unrealized_cls = "pos-green" if upl >= 0 else "pos-red"
+            unreal     = (live_price - buy_price) * shares
+            unreal_pct = (live_price - buy_price) / buy_price * 100 if buy_price else 0
+            color      = "green" if unreal >= 0 else "red"
+            sign       = "+" if unreal >= 0 else ""
+            rows.append(("Live price",   f'<span class="card-row-value white">${live_price:.2f}</span>'))
+            rows.append(("Unrealized P/L", f'<span class="card-row-value {color}">{sign}${unreal:.0f} ({unreal_pct:+.1f}%)</span>'))
 
-        grid_html = f"""
-        <div class="position-grid">
-            <div class="pos-col">
-                <div class="pos-label">Type</div>
-                <div><span class="badge stock">Stock</span></div>
-            </div>
-            <div class="pos-col">
-                <div class="pos-label">Side</div>
-                <div><span class="badge buy">Buy</span></div>
-            </div>
-            <div class="pos-col">
-                <div class="pos-label">Shares</div>
-                <div class="pos-value">{shares}</div>
-            </div>
-            <div class="pos-col">
-                <div class="pos-label">Buy price</div>
-                <div class="pos-value pos-amber">${buy_price:.2f}</div>
-            </div>
-            <div class="pos-col">
-                <div class="pos-label">Total cost</div>
-                <div class="pos-value pos-green">${total_cost:.2f}</div>
-            </div>
-            <div class="pos-col">
-                <div class="pos-label">Days held</div>
-                <div class="pos-value">{dit}d</div>
-            </div>
-            <div class="pos-col">
-                <div class="pos-label">Live price</div>
-                <div class="pos-value">{f"${live_price:.2f}" if live_price else "—"}</div>
-            </div>
-            <div class="pos-col">
-                <div class="pos-label">Unrealized P/L</div>
-                <div class="pos-value {unrealized_cls}">{unrealized}</div>
-            </div>
-        </div>
-        """
-        details = {
-            "Open Date": date_str or "—",
-            "Buy Price": f"${buy_price:.2f}",
-            "Shares": str(shares),
-            "Total Cost": f"${total_cost:.2f}",
-            "Notes": t.get("notes") or "—",
-        }
-        detail_classes = {}
+    if t.get("notes"):
+        rows.append(("Notes", f'<span class="card-row-value" style="color:#5a5a52;font-style:italic">{t["notes"]}</span>'))
 
-    st.markdown(f"""
-    <div class="position-row">
-        <div class="pos-row-top">
-            <div></div>
-            <div class="pos-date">{date_str}</div>
-        </div>
-        {grid_html}
+    rows_html = "".join(
+        f'<div class="card-row"><span class="card-row-label">{lbl}</span>{val}</div>'
+        for lbl, val in rows
+    )
+    date_str = t.get("date", "")
+    return f"""
+<div class="trade-card {typ}">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+        <div class="card-title {typ}">{title}</div>
+        <div style="font-size:10px;color:#3a3a32;font-family:'JetBrains Mono',monospace;white-space:nowrap;margin-left:8px">{date_str}</div>
     </div>
-    """, unsafe_allow_html=True)
-
-    b1, b2, b3 = st.columns([1, 1, 1])
-    with b1:
-        if st.button("Close position →", key=f"close_{t['id']}", use_container_width=True):
-            st.session_state[f"closing_{t['id']}"] = True
-            st.session_state[f"editing_{t['id']}"] = False
-    with b2:
-        if st.button("Edit", key=f"edit_{t['id']}", use_container_width=True):
-            st.session_state[f"editing_{t['id']}"] = True
-            st.session_state[f"closing_{t['id']}"] = False
-    with b3:
-        if st.button("Delete", key=f"del_{t['id']}", use_container_width=True):
-            delete_trade(t["id"])
-            st.rerun()
-
-    title = f"Details · {t['type']} · {t.get('contracts', t.get('shares', ''))} · {t.get('expiry', t['symbol'])}"
-    with st.expander(title):
-        cols = st.columns(5)
-        items = list(details.items())
-        for i, (k, v) in enumerate(items):
-            css = detail_classes.get(k, "")
-            cols[i % 5].markdown(f"""
-            <div class="detail-box">
-                <div class="detail-label">{k}</div>
-                <div class="detail-value {css}">{v}</div>
-            </div>
-            """, unsafe_allow_html=True)
+    <div class="card-rows">{rows_html}</div>
+</div>"""
 
 # ── Ticker view ────────────────────────────────────────────────────
 def render_ticker(sym):
@@ -1008,19 +826,36 @@ def render_ticker(sym):
             ("Gross Premium", f"${all_premium:.2f}",                             "white",   None),
             ("Net Retained",  f"${net_premium:.2f}",                             "white",   None),
             ("Open Premium",  f"${open_premium:.2f}" if open_premium else "—",   "amber",   None),
-            ("Win Rate",      win_rate_str,                                      "white",   None),
-            (proj_label,      proj_val,                                          "amber",   proj_sub),
+            ("Win Rate",      win_rate_str,                                       "white",   None),
+            (proj_label,      proj_val,                                           "amber",   proj_sub),
         ])
 
         st.markdown('<div class="section-title">Open positions</div>', unsafe_allow_html=True)
         if open_trades:
             live_price = get_price(sym)
-            for t in open_trades:
-                render_position_row(t, live_price)
-                if st.session_state.get(f"closing_{t['id']}"):
-                    render_close_form(t)
-                if st.session_state.get(f"editing_{t['id']}"):
-                    render_edit_form(t)
+            pairs = [open_trades[i:i+2] for i in range(0, len(open_trades), 2)]
+            for pair in pairs:
+                cols = st.columns(len(pair))
+                for i, t in enumerate(pair):
+                    with cols[i]:
+                        st.markdown(build_card_html(t, live_price), unsafe_allow_html=True)
+                        b1, b2, b3 = st.columns(3)
+                        with b1:
+                            if st.button("✓ Close", key=f"close_{t['id']}", use_container_width=True, type="primary"):
+                                st.session_state[f"closing_{t['id']}"] = True
+                                st.session_state[f"editing_{t['id']}"] = False
+                        with b2:
+                            if st.button("Edit", key=f"edit_{t['id']}", use_container_width=True):
+                                st.session_state[f"editing_{t['id']}"] = True
+                                st.session_state[f"closing_{t['id']}"] = False
+                        with b3:
+                            if st.button("Delete", key=f"del_{t['id']}", use_container_width=True):
+                                delete_trade(t["id"])
+                                st.rerun()
+                        if st.session_state.get(f"closing_{t['id']}"):
+                            render_close_form(t)
+                        if st.session_state.get(f"editing_{t['id']}"):
+                            render_edit_form(t)
         else:
             st.markdown('<div style="color:#3a3a32;font-size:12px;padding:12px 0">No open positions</div>', unsafe_allow_html=True)
 
@@ -1036,10 +871,8 @@ def render_ticker(sym):
 
                 with st.expander(f"{t['date']} · {t['type']} {t['side']} {qty_str} · P&L: {pnl_sign}${pnl:.2f}"):
                     c1, c2, c3, c4, c5 = st.columns(5)
-
                     def _m(col, lbl, val):
                         col.markdown(f'<div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#3a3a32;margin-bottom:4px">{lbl}</div><div style="font-size:14px;font-family:JetBrains Mono,monospace;color:#c8c6bf">{val}</div>', unsafe_allow_html=True)
-
                     _m(c1, "TYPE",    f"{t['type']} {t['side']}")
                     _m(c2, "PREMIUM", f"${float(t['total_premium']):.2f}")
                     _m(c3, "P&L",     f"{pnl_sign}${pnl:.2f}")
