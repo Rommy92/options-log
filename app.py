@@ -317,6 +317,18 @@ hr { border-color: rgba(255,255,255,0.05) !important; }
 /* ── Info/warning/success boxes ── */
 .stAlert { font-size: 12px !important; }
 
+/* ── Ticker click buttons — collapse to invisible hit area ── */
+[data-testid="stSidebar"] section div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlock"] .stButton button {
+    height: 0px !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin-top: -6px !important;
+    opacity: 0 !important;
+    border: none !important;
+    background: transparent !important;
+    font-size: 0 !important;
+}
+
 /* ── Hide streamlit branding ── */
 #MainMenu { visibility: hidden; }
 footer { visibility: hidden; }
@@ -523,23 +535,25 @@ with st.sidebar:
         closed_pnl = sum(float(t.get("closed_pnl") or 0) for t in sym_trades if t.get("closed"))
         is_active  = st.session_state.active_ticker == sym
 
-        prem_color = "ticker-prem" if open_prem > 0 else ("ticker-prem neg" if closed_pnl < 0 else "ticker-meta")
         prem_label = f"${open_prem:,.0f}" if open_prem else (f"+${closed_pnl:,.0f}" if closed_pnl > 0 else (f"-${abs(closed_pnl):,.0f}" if closed_pnl < 0 else "—"))
+        prem_color = "#a8d472" if open_prem > 0 else ("#e87070" if closed_pnl < 0 else "#4a4a42")
+        active_bg  = "rgba(240,192,60,0.08)" if is_active else "transparent"
+        active_border = "rgba(240,192,60,0.3)" if is_active else "rgba(255,255,255,0.05)"
+        sym_color  = "#f0c03c" if is_active else "#e8e6df"
 
-        active_cls = "active" if is_active else ""
         st.markdown(f"""
-        <div class="ticker-row {active_cls}" id="ticker_{sym}">
+        <div style="background:{active_bg};border:1px solid {active_border};border-radius:6px;
+                    padding:8px 10px;margin-bottom:2px;display:flex;align-items:center;
+                    justify-content:space-between;pointer-events:none">
             <div>
-                <span class="ticker-sym">{sym}</span>
-                <span class="ticker-meta" style="margin-left:6px">{open_count} open</span>
+                <span style="font-size:13px;font-weight:600;letter-spacing:0.05em;color:{sym_color}">{sym}</span>
+                <span style="font-size:10px;color:#3a3a32;margin-left:6px">{open_count} open</span>
             </div>
-            <span class="{prem_color}">{prem_label}</span>
+            <span style="font-size:11px;font-family:'JetBrains Mono',monospace;color:{prem_color}">{prem_label}</span>
         </div>
         """, unsafe_allow_html=True)
 
-        # Invisible button overlay for click handling
-        if st.button(sym, key=f"ticker_{sym}", use_container_width=True,
-                     label_visibility="collapsed"):
+        if st.button(sym, key=f"ticker_{sym}", use_container_width=True):
             st.session_state.active_ticker = sym
             st.session_state.active_tab = "log"
             st.session_state.show_add_trade = False
