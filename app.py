@@ -317,18 +317,6 @@ hr { border-color: rgba(255,255,255,0.05) !important; }
 /* ── Info/warning/success boxes ── */
 .stAlert { font-size: 12px !important; }
 
-/* ── Ticker click buttons — collapse to invisible hit area ── */
-[data-testid="stSidebar"] section div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlock"] .stButton button {
-    height: 0px !important;
-    min-height: 0 !important;
-    padding: 0 !important;
-    margin-top: -6px !important;
-    opacity: 0 !important;
-    border: none !important;
-    background: transparent !important;
-    font-size: 0 !important;
-}
-
 /* ── Hide streamlit branding ── */
 #MainMenu { visibility: hidden; }
 footer { visibility: hidden; }
@@ -484,15 +472,27 @@ def fmt_proj(proj_val, cycles, dte, basis):
     sub    = f"{int(cycles)} cycles/yr · {int(dte)}d avg" if cycles and dte else "—"
     return dollar, pct, sub
 
-# ── HTML stat box helper ───────────────────────────────────────────
-def stat_box(label, value, color="amber", sub=None):
-    sub_html = f'<div class="stat-sub">{sub}</div>' if sub else ""
-    return f"""
-    <div class="stat-box">
-        <div class="stat-label">{label}</div>
-        <div class="stat-value {color}">{value}</div>
-        {sub_html}
-    </div>"""
+# ── Stat box helper (inline styles, works reliably in Streamlit) ───
+_STAT_COLORS = {
+    "amber": "#f0c03c",
+    "green": "#a8d472",
+    "red":   "#e87070",
+    "white": "#e8e6df",
+    "muted": "#4a4a42",
+}
+
+def render_stat_cols(stats):
+    """stats = list of (label, value, color_key, sub_or_None)"""
+    cols = st.columns(len(stats))
+    for col, (lbl, val, color_key, sub) in zip(cols, stats):
+        hex_color = _STAT_COLORS.get(color_key, "#f0c03c")
+        sub_html = f'<div style="font-size:10px;color:#3a3a32;margin-top:2px;font-family:monospace">{sub}</div>' if sub else ""
+        col.markdown(f"""
+<div style="background:#1a1a17;border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:10px 14px;height:100%">
+    <div style="font-size:9px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#3a3a32;margin-bottom:4px">{lbl}</div>
+    <div style="font-size:16px;font-weight:600;font-family:'JetBrains Mono',monospace;color:{hex_color};line-height:1.2">{val}</div>
+    {sub_html}
+</div>""", unsafe_allow_html=True)
 
 # ── Session state ──────────────────────────────────────────────────
 for key, default in [
@@ -532,28 +532,15 @@ with st.sidebar:
         open_opts  = [t for t in sym_trades if not t.get("closed") and t["type"] != "Stock"]
         open_count = sum(1 for t in sym_trades if not t.get("closed"))
         open_prem  = sum(float(t.get("total_premium") or 0) for t in open_opts)
-        closed_pnl = sum(float(t.get("closed_pnl") or 0) for t in sym_trades if t.get("closed"))
+        closed_pnl_sym = sum(float(t.get("closed_pnl") or 0) for t in sym_trades if t.get("closed"))
         is_active  = st.session_state.active_ticker == sym
 
-        prem_label = f"${open_prem:,.0f}" if open_prem else (f"+${closed_pnl:,.0f}" if closed_pnl > 0 else (f"-${abs(closed_pnl):,.0f}" if closed_pnl < 0 else "—"))
-        prem_color = "#a8d472" if open_prem > 0 else ("#e87070" if closed_pnl < 0 else "#4a4a42")
-        active_bg  = "rgba(240,192,60,0.08)" if is_active else "transparent"
-        active_border = "rgba(240,192,60,0.3)" if is_active else "rgba(255,255,255,0.05)"
-        sym_color  = "#f0c03c" if is_active else "#e8e6df"
+        prem_label = f"${open_prem:,.0f}" if open_prem else (f"+${closed_pnl_sym:,.0f}" if closed_pnl_sym > 0 else (f"-${abs(closed_pnl_sym):,.0f}" if closed_pnl_sym < 0 else "—"))
 
-        st.markdown(f"""
-        <div style="background:{active_bg};border:1px solid {active_border};border-radius:6px;
-                    padding:8px 10px;margin-bottom:2px;display:flex;align-items:center;
-                    justify-content:space-between;pointer-events:none">
-            <div>
-                <span style="font-size:13px;font-weight:600;letter-spacing:0.05em;color:{sym_color}">{sym}</span>
-                <span style="font-size:10px;color:#3a3a32;margin-left:6px">{open_count} open</span>
-            </div>
-            <span style="font-size:11px;font-family:'JetBrains Mono',monospace;color:{prem_color}">{prem_label}</span>
-        </div>
-        """, unsafe_allow_html=True)
-
-        if st.button(sym, key=f"ticker_{sym}", use_container_width=True):
+        # Build label with sym + meta inline
+        btn_label = f"{sym}   {open_count} open · {prem_label}"
+        if st.button(btn_label, key=f"ticker_{sym}", use_container_width=True,
+                     type="primary" if is_active else "secondary"):
             st.session_state.active_ticker = sym
             st.session_state.active_tab = "log"
             st.session_state.show_add_trade = False
@@ -649,14 +636,13 @@ def render_dashboard():
     pnl_color = "green" if total_pnl >= 0 else "red"
     pnl_str   = f"+${total_pnl:,.2f}" if total_pnl >= 0 else f"-${abs(total_pnl):,.2f}"
 
-    stats_html = '<div class="stats-bar">'
-    stats_html += stat_box("Realized P&L", pnl_str, pnl_color)
-    stats_html += stat_box("All-time Premium", f"${total_premium:,.2f}", "white")
-    stats_html += stat_box("Open at Risk", f"${open_premium:,.2f}" if open_premium else "—", "amber")
-    stats_html += stat_box("Win Rate", win_rate, "white", f"{wins}/{len(closed)} trades")
-    stats_html += stat_box("Avg Open Ann.", avg_ann, "amber")
-    stats_html += '</div>'
-    st.markdown(stats_html, unsafe_allow_html=True)
+    render_stat_cols([
+        ("Realized P&L",    pnl_str,                                          pnl_color, None),
+        ("All-time Premium", f"${total_premium:,.2f}",                        "white",   None),
+        ("Open at Risk",    f"${open_premium:,.2f}" if open_premium else "—", "amber",   None),
+        ("Win Rate",        win_rate,                                          "white",   f"{wins}/{len(closed)} trades"),
+        ("Avg Open Ann.",   avg_ann,                                           "amber",   None),
+    ])
 
     # Monthly chart
     st.markdown('<div class="section-title">Monthly premium collected — last 12 months</div>', unsafe_allow_html=True)
@@ -906,22 +892,20 @@ def render_ticker(sym):
     tab1, tab2 = st.tabs(["TRADE LOG", "SCREENER"])
 
     with tab1:
-        # Stats bar
-        pnl_color = "green" if closed_pnl >= 0 else "red"
-        pnl_str   = f"+${closed_pnl:.2f}" if closed_pnl >= 0 else f"-${abs(closed_pnl):.2f}"
-        proj_label = "PROJ / YR" if closed_opts_count >= 3 else f"PROJ / YR ({3-closed_opts_count} more)"
+        pnl_color  = "green" if closed_pnl >= 0 else "red"
+        pnl_str    = f"+${closed_pnl:.2f}" if closed_pnl >= 0 else f"-${abs(closed_pnl):.2f}"
+        proj_label = "PROJ / YR" if closed_opts_count >= 3 else f"PROJ/YR ({3-closed_opts_count} more)"
         proj_val   = cp[0] if closed_opts_count >= 3 else "—"
         proj_sub   = cp[1] if closed_opts_count >= 3 else "(3+ closes)"
 
-        stats_html = '<div class="stats-bar">'
-        stats_html += stat_box("Realized P&L", pnl_str, pnl_color)
-        stats_html += stat_box("Gross Premium (closed)", f"${all_premium:.2f}", "white")
-        stats_html += stat_box("Net Retained (gross+P&L)", f"${net_premium:.2f}", "white")
-        stats_html += stat_box("Open Premium", f"${open_premium:.2f}" if open_premium else "—", "amber")
-        stats_html += stat_box("Win Rate", win_rate_str, "white")
-        stats_html += stat_box(proj_label, proj_val, "amber", proj_sub)
-        stats_html += '</div>'
-        st.markdown(stats_html, unsafe_allow_html=True)
+        render_stat_cols([
+            ("Realized P&L",           pnl_str,                                           pnl_color, None),
+            ("Gross Premium",          f"${all_premium:.2f}",                             "white",   None),
+            ("Net Retained",           f"${net_premium:.2f}",                             "white",   None),
+            ("Open Premium",           f"${open_premium:.2f}" if open_premium else "—",   "amber",   None),
+            ("Win Rate",               win_rate_str,                                       "white",   None),
+            (proj_label,               proj_val,                                           "amber",   proj_sub),
+        ])
 
         # Open positions — 2-col card grid
         st.markdown('<div class="section-title">Open positions</div>', unsafe_allow_html=True)
