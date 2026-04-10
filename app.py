@@ -89,7 +89,7 @@ div[data-testid="metric-container"] {
     font-family: 'JetBrains Mono', monospace;
 }
 
-/* ── Legacy trade cards (kept for closed/open forms if needed) ── */
+/* ── Legacy trade cards ── */
 .trade-card {
     background: #1a1a17;
     border: 1px solid rgba(255,255,255,0.07);
@@ -413,7 +413,7 @@ def add_ticker(symbol):
     try:
         sb.table("tickers").insert({"symbol": symbol.upper()}).execute()
         return True
-    except:
+    except Exception:
         return False
 
 def remove_ticker(symbol):
@@ -443,7 +443,7 @@ def get_price(symbol):
         t = yf.Ticker(symbol)
         info = t.fast_info
         return round(float(info.last_price), 2)
-    except:
+    except Exception:
         return None
 
 @st.cache_data(ttl=300)
@@ -453,21 +453,26 @@ def get_options_chain(symbol, option_type="calls"):
         exps = t.options
         today = date.today()
         results = []
+
         for exp in exps:
             exp_date = datetime.strptime(exp, "%Y-%m-%d").date()
             dte = (exp_date - today).days
             if dte < 25 or dte > 55:
                 continue
+
             chain = t.option_chain(exp)
             df = chain.calls if option_type == "calls" else chain.puts
             df = df.copy()
             df["expiry"] = exp
             df["dte"] = dte
             results.append(df)
+
         if not results:
             return pd.DataFrame()
+
         return pd.concat(results, ignore_index=True)
-    except:
+
+    except Exception:
         return pd.DataFrame()
 
 # ── Calc helpers ───────────────────────────────────────────────────
@@ -478,7 +483,7 @@ def parse_date_safe(val):
         return val
     try:
         return datetime.strptime(str(val), "%Y-%m-%d").date()
-    except:
+    except Exception:
         return None
 
 def days_between(a, b):
@@ -488,30 +493,30 @@ def days_between(a, b):
         da = datetime.strptime(str(a), "%Y-%m-%d").date() if isinstance(a, str) else a
         db = datetime.strptime(str(b), "%Y-%m-%d").date() if isinstance(b, str) else b
         return (db - da).days
-    except:
+    except Exception:
         return 0
 
 def calc_projection(trades, symbol):
     opts = [t for t in trades if t["symbol"] == symbol and t["type"] != "Stock"]
     closed_opts = [t for t in opts if t.get("closed") and t.get("closed_date")]
-    open_opts   = [t for t in opts if not t.get("closed") and t.get("expiry")]
+    open_opts = [t for t in opts if not t.get("closed") and t.get("expiry")]
 
     def avg(lst):
         return sum(lst) / len(lst) if lst else None
 
-    closed_dtes  = [days_between(t["date"], t["closed_date"]) for t in closed_opts if days_between(t["date"], t["closed_date"]) > 0]
+    closed_dtes = [days_between(t["date"], t["closed_date"]) for t in closed_opts if days_between(t["date"], t["closed_date"]) > 0]
     closed_prems = [float(t["total_premium"] or 0) for t in closed_opts]
-    avg_c_dte    = avg(closed_dtes)
-    avg_c_prem   = avg(closed_prems)
-    closed_proj  = (avg_c_prem * (365 / avg_c_dte)) if (avg_c_dte and avg_c_prem and len(closed_opts) >= 3) else None
-    closed_cycles= (365 / avg_c_dte) if avg_c_dte else None
+    avg_c_dte = avg(closed_dtes)
+    avg_c_prem = avg(closed_prems)
+    closed_proj = (avg_c_prem * (365 / avg_c_dte)) if (avg_c_dte and avg_c_prem and len(closed_opts) >= 3) else None
+    closed_cycles = (365 / avg_c_dte) if avg_c_dte else None
 
-    open_dtes  = [days_between(t["date"], t["expiry"]) for t in open_opts if days_between(t["date"], t["expiry"]) > 0]
+    open_dtes = [days_between(t["date"], t["expiry"]) for t in open_opts if days_between(t["date"], t["expiry"]) > 0]
     open_prems = [float(t["total_premium"] or 0) for t in open_opts]
-    avg_o_dte  = avg(open_dtes)
+    avg_o_dte = avg(open_dtes)
     avg_o_prem = avg(open_prems)
-    open_proj  = (avg_o_prem * (365 / avg_o_dte)) if avg_o_dte and avg_o_prem else None
-    open_cycles= (365 / avg_o_dte) if avg_o_dte else None
+    open_proj = (avg_o_prem * (365 / avg_o_dte)) if avg_o_dte and avg_o_prem else None
+    open_cycles = (365 / avg_o_dte) if avg_o_dte else None
 
     stock = next(
         (t for t in trades if t["symbol"] == symbol and t["type"] == "Stock" and t["side"] == "Buy" and not t.get("closed")),
@@ -520,24 +525,24 @@ def calc_projection(trades, symbol):
     basis = float(stock["premium"]) * float(stock.get("shares", 100)) if stock else None
 
     return {
-        "closed_proj": closed_proj, "closed_cycles": closed_cycles, "avg_c_dte": avg_c_dte,
-        "open_proj": open_proj,     "open_cycles": open_cycles,     "avg_o_dte": avg_o_dte,
-        "basis": basis
+        "closed_proj": closed_proj,
+        "closed_cycles": closed_cycles,
+        "avg_c_dte": avg_c_dte,
+        "open_proj": open_proj,
+        "open_cycles": open_cycles,
+        "avg_o_dte": avg_o_dte,
+        "basis": basis,
     }
 
 def fmt_proj(proj_val, cycles, dte, basis):
     if not proj_val:
         return "—", "—", "—"
     dollar = f"${proj_val:,.0f}"
-    pct    = f"{(proj_val/basis*100):.1f}%" if basis else "—"
-    sub    = f"{int(cycles)} cycles/yr · {int(dte)}d avg" if cycles and dte else "—"
+    pct = f"{(proj_val / basis * 100):.1f}%" if basis else "—"
+    sub = f"{int(cycles)} cycles/yr · {int(dte)}d avg" if cycles and dte else "—"
     return dollar, pct, sub
 
 def open_trade_sort_key(t):
-    """
-    Sort open positions by DTE low to high.
-    Stocks go after options because they have no expiry.
-    """
     if t["type"] != "Stock" and t.get("expiry"):
         dte = days_between(date.today(), t["expiry"])
         dte = dte if dte >= 0 else 999999
@@ -546,8 +551,11 @@ def open_trade_sort_key(t):
 
 # ── Stat cols helper ───────────────────────────────────────────────
 _STAT_COLORS = {
-    "amber": "#f0c03c", "green": "#a8d472",
-    "red": "#e87070",   "white": "#e8e6df", "muted": "#4a4a42",
+    "amber": "#f0c03c",
+    "green": "#a8d472",
+    "red": "#e87070",
+    "white": "#e8e6df",
+    "muted": "#4a4a42",
 }
 
 def render_stat_cols(stats):
@@ -564,14 +572,16 @@ def render_stat_cols(stats):
 
 # ── Session state ──────────────────────────────────────────────────
 for key, default in [
-    ("active_ticker", None), ("active_tab", "dashboard"),
-    ("show_add_trade", False), ("show_quick_add", False),
+    ("active_ticker", None),
+    ("active_tab", "dashboard"),
+    ("show_add_trade", False),
+    ("show_quick_add", False),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
 
 # ── Load data ──────────────────────────────────────────────────────
-tickers    = load_tickers()
+tickers = load_tickers()
 all_trades = load_trades()
 
 def ticker_open_count(sym):
@@ -584,8 +594,7 @@ with st.sidebar:
     st.markdown('<div class="sidebar-title">◈ OPTIONS LOG</div>', unsafe_allow_html=True)
 
     is_dash = st.session_state.active_tab == "dashboard"
-    if st.button("⊞ Dashboard", use_container_width=True,
-                 type="primary" if is_dash else "secondary"):
+    if st.button("⊞ Dashboard", use_container_width=True, type="primary" if is_dash else "secondary"):
         st.session_state.active_tab = "dashboard"
         st.session_state.active_ticker = None
         st.rerun()
@@ -593,12 +602,12 @@ with st.sidebar:
     st.markdown('<div class="sidebar-section">Tickers</div>', unsafe_allow_html=True)
 
     for sym in tickers_sorted:
-        sym_trades     = [t for t in all_trades if t["symbol"] == sym]
-        open_opts      = [t for t in sym_trades if not t.get("closed") and t["type"] != "Stock"]
-        open_count     = sum(1 for t in sym_trades if not t.get("closed"))
-        open_prem      = sum(float(t.get("total_premium") or 0) for t in open_opts)
+        sym_trades = [t for t in all_trades if t["symbol"] == sym]
+        open_opts = [t for t in sym_trades if not t.get("closed") and t["type"] != "Stock"]
+        open_count = sum(1 for t in sym_trades if not t.get("closed"))
+        open_prem = sum(float(t.get("total_premium") or 0) for t in open_opts)
         closed_pnl_sym = sum(float(t.get("closed_pnl") or 0) for t in sym_trades if t.get("closed"))
-        is_active      = st.session_state.active_ticker == sym
+        is_active = st.session_state.active_ticker == sym
 
         prem_label = (
             f"${open_prem:,.0f}" if open_prem else
@@ -608,17 +617,20 @@ with st.sidebar:
 
         col_sym, col_del = st.columns([5, 1])
         with col_sym:
-            if st.button(f"{sym}   {open_count} open · {prem_label}",
-                         key=f"ticker_{sym}", use_container_width=True,
-                         type="primary" if is_active else "secondary"):
+            if st.button(
+                f"{sym}   {open_count} open · {prem_label}",
+                key=f"ticker_{sym}",
+                use_container_width=True,
+                type="primary" if is_active else "secondary"
+            ):
                 st.session_state.active_ticker = sym
                 st.session_state.active_tab = "log"
                 st.session_state.show_add_trade = False
                 st.session_state.show_quick_add = False
                 st.rerun()
+
         with col_del:
-            if st.button("✕", key=f"del_ticker_{sym}", use_container_width=True,
-                         help=f"Remove {sym} and all its trades"):
+            if st.button("✕", key=f"del_ticker_{sym}", use_container_width=True, help=f"Remove {sym} and all its trades"):
                 st.session_state[f"confirm_del_ticker_{sym}"] = True
                 st.rerun()
 
@@ -626,8 +638,7 @@ with st.sidebar:
             st.warning(f"Delete **{sym}** and all {len(sym_trades)} trades?")
             cc1, cc2 = st.columns(2)
             with cc1:
-                if st.button("Yes, delete", key=f"confirm_yes_{sym}",
-                             type="primary", use_container_width=True):
+                if st.button("Yes, delete", key=f"confirm_yes_{sym}", type="primary", use_container_width=True):
                     remove_ticker(sym)
                     if st.session_state.active_ticker == sym:
                         st.session_state.active_ticker = None
@@ -663,34 +674,41 @@ with st.sidebar:
         try:
             raw = json.loads(uploaded.read())
             import_tickers = raw.get("tickers", [])
-            import_trades  = raw.get("trades", [])
+            import_trades = raw.get("trades", [])
             st.warning(f"Import {len(import_trades)} trades for {len(import_tickers)} tickers?")
 
             if st.button("Confirm import", use_container_width=True):
                 for sym in import_tickers:
                     try:
                         sb.table("tickers").insert({"symbol": sym}).execute()
-                    except:
+                    except Exception:
                         pass
 
                 for t in import_trades:
                     mapped = {
-                        "id": str(t.get("id", "")), "symbol": t.get("symbol"),
-                        "type": t.get("type"), "side": t.get("side"),
-                        "date": t.get("date"), "expiry": t.get("expiry"),
-                        "strike": t.get("strike"), "contracts": t.get("contracts"),
-                        "shares": t.get("shares"), "premium": t.get("premium"),
+                        "id": str(t.get("id", "")),
+                        "symbol": t.get("symbol"),
+                        "type": t.get("type"),
+                        "side": t.get("side"),
+                        "date": t.get("date"),
+                        "expiry": t.get("expiry"),
+                        "strike": t.get("strike"),
+                        "contracts": t.get("contracts"),
+                        "shares": t.get("shares"),
+                        "premium": t.get("premium"),
                         "total_premium": t.get("total_premium") or t.get("totalPremium"),
-                        "spot": t.get("spot"), "annualized": t.get("annualized"),
-                        "notes": t.get("notes", ""), "closed": t.get("closed", False),
-                        "closed_date":  t.get("closed_date")  or t.get("closedDate"),
+                        "spot": t.get("spot"),
+                        "annualized": t.get("annualized"),
+                        "notes": t.get("notes", ""),
+                        "closed": t.get("closed", False),
+                        "closed_date": t.get("closed_date") or t.get("closedDate"),
                         "closed_price": t.get("closed_price") or t.get("closedPrice"),
-                        "closed_pnl":   t.get("closed_pnl")   or t.get("closedPnl"),
+                        "closed_pnl": t.get("closed_pnl") or t.get("closedPnl"),
                     }
                     mapped = {k: v for k, v in mapped.items() if v is not None}
                     try:
                         sb.table("trades").upsert(mapped).execute()
-                    except:
+                    except Exception:
                         pass
 
                 st.success("Import complete!")
@@ -711,26 +729,26 @@ def render_dashboard():
         unsafe_allow_html=True
     )
 
-    trades    = all_trades
-    closed    = [t for t in trades if t.get("closed")]
+    trades = all_trades
+    closed = [t for t in trades if t.get("closed")]
     open_opts = [t for t in trades if not t.get("closed") and t["type"] != "Stock"]
 
-    total_pnl     = sum(float(t.get("closed_pnl") or 0) for t in closed)
+    total_pnl = sum(float(t.get("closed_pnl") or 0) for t in closed)
     total_premium = sum(float(t.get("total_premium") or 0) for t in trades if t["type"] != "Stock")
-    open_premium  = sum(float(t.get("total_premium") or 0) for t in open_opts)
-    wins          = sum(1 for t in closed if float(t.get("closed_pnl") or 0) > 0)
-    win_rate      = f"{wins/len(closed)*100:.0f}%" if closed else "—"
-    open_anns     = [float(t["annualized"]) for t in open_opts if t.get("annualized")]
-    avg_ann       = f"{sum(open_anns)/len(open_anns):.1f}%" if open_anns else "—"
-    pnl_color     = "green" if total_pnl >= 0 else "red"
-    pnl_str       = f"+${total_pnl:,.2f}" if total_pnl >= 0 else f"-${abs(total_pnl):,.2f}"
+    open_premium = sum(float(t.get("total_premium") or 0) for t in open_opts)
+    wins = sum(1 for t in closed if float(t.get("closed_pnl") or 0) > 0)
+    win_rate = f"{wins / len(closed) * 100:.0f}%" if closed else "—"
+    open_anns = [float(t["annualized"]) for t in open_opts if t.get("annualized")]
+    avg_ann = f"{sum(open_anns) / len(open_anns):.1f}%" if open_anns else "—"
+    pnl_color = "green" if total_pnl >= 0 else "red"
+    pnl_str = f"+${total_pnl:,.2f}" if total_pnl >= 0 else f"-${abs(total_pnl):,.2f}"
 
     render_stat_cols([
-        ("Realized P&L",     pnl_str,                                          pnl_color, None),
-        ("All-time Premium", f"${total_premium:,.2f}",                         "white",   None),
-        ("Open at Risk",     f"${open_premium:,.2f}" if open_premium else "—", "amber",   None),
-        ("Win Rate",         win_rate,                                          "white",   f"{wins}/{len(closed)} trades"),
-        ("Avg Open Ann.",    avg_ann,                                           "amber",   None),
+        ("Realized P&L", pnl_str, pnl_color, None),
+        ("All-time Premium", f"${total_premium:,.2f}", "white", None),
+        ("Open at Risk", f"${open_premium:,.2f}" if open_premium else "—", "amber", None),
+        ("Win Rate", win_rate, "white", f"{wins}/{len(closed)} trades"),
+        ("Avg Open Ann.", avg_ann, "amber", None),
     ])
 
     st.markdown('<div class="section-title">Monthly premium collected — last 12 months</div>', unsafe_allow_html=True)
@@ -753,9 +771,9 @@ def render_dashboard():
         row_months = months[row_start:row_start + 6]
         cols = st.columns(6)
         for col, m in zip(cols, row_months):
-            prem      = m["premium"]
-            bar_pct   = int(prem / max_prem * 100) if max_prem else 0
-            val_str   = f"${prem:,.0f}" if prem else "—"
+            prem = m["premium"]
+            bar_pct = int(prem / max_prem * 100) if max_prem else 0
+            val_str = f"${prem:,.0f}" if prem else "—"
             val_color = "#f0c03c" if prem > 0 else "#2a2a27"
             bar_color = "#f0c03c" if prem > 0 else "#1e1e1b"
             col.markdown(f"""
@@ -775,17 +793,19 @@ def render_dashboard():
             sym = t["symbol"]
             if sym not in prices:
                 prices[sym] = get_price(sym)
-            price    = prices.get(sym)
-            ann      = float(t["annualized"]) if t.get("annualized") else None
+            price = prices.get(sym)
+            ann = float(t["annualized"]) if t.get("annualized") else None
             dte_left = days_between(str(date.today()), t.get("expiry", "")) if t.get("expiry") else None
             dist_str = "—"
             if price and t.get("strike"):
-                strike   = float(t["strike"])
-                dist     = (strike - price) if t["type"] == "Call" else (price - strike)
+                strike = float(t["strike"])
+                dist = (strike - price) if t["type"] == "Call" else (price - strike)
                 dist_pct = dist / price * 100
                 dist_str = "ITM ⚠" if dist <= 0 else f"+{dist_pct:.1f}% (${abs(dist):.2f})"
+
             rows.append({
-                "Symbol": sym, "Type": t["type"],
+                "Symbol": sym,
+                "Type": t["type"],
                 "Ann %": f"{ann:.1f}%" if ann else "—",
                 "Strike": f"${float(t['strike']):.2f}" if t.get("strike") else "—",
                 "Expiry": t.get("expiry", "—"),
@@ -803,19 +823,25 @@ def render_dashboard():
     for sym in tickers:
         sym_trades = [t for t in trades if t["symbol"] == sym]
         sym_closed = [t for t in sym_trades if t.get("closed")]
-        sym_open   = [t for t in sym_trades if not t.get("closed") and t["type"] != "Stock"]
-        pnl  = sum(float(t.get("closed_pnl") or 0) for t in sym_closed)
-        op   = sum(float(t.get("total_premium") or 0) for t in sym_open)
+        sym_open = [t for t in sym_trades if not t.get("closed") and t["type"] != "Stock"]
+        pnl = sum(float(t.get("closed_pnl") or 0) for t in sym_closed)
+        op = sum(float(t.get("total_premium") or 0) for t in sym_open)
         proj = calc_projection(trades, sym)
-        cp   = fmt_proj(proj["closed_proj"], proj["closed_cycles"], proj["avg_c_dte"], proj["basis"])
-        opP  = fmt_proj(proj["open_proj"],   proj["open_cycles"],   proj["avg_o_dte"], proj["basis"])
+        cp = fmt_proj(proj["closed_proj"], proj["closed_cycles"], proj["avg_c_dte"], proj["basis"])
+        opP = fmt_proj(proj["open_proj"], proj["open_cycles"], proj["avg_o_dte"], proj["basis"])
+
         ticker_rows.append({
-            "Ticker": sym, "Trades": len(sym_trades), "Open": len(sym_open),
+            "Ticker": sym,
+            "Trades": len(sym_trades),
+            "Open": len(sym_open),
             "Open premium": f"${op:.2f}" if op else "—",
             "Realized P&L": f"{'+' if pnl >= 0 else ''}${pnl:.2f}",
-            "Proj/yr (hist)": cp[0], "% basis": cp[1],
-            "Proj/yr (open)": opP[0], "% basis (open)": opP[1],
+            "Proj/yr (hist)": cp[0],
+            "% basis": cp[1],
+            "Proj/yr (open)": opP[0],
+            "% basis (open)": opP[1],
         })
+
     if ticker_rows:
         st.dataframe(pd.DataFrame(ticker_rows), use_container_width=True, hide_index=True)
 
@@ -909,7 +935,6 @@ def build_open_position_strip_html(t, live_price):
     held = (date.today() - open_date).days if open_date else None
 
     live_val = "—"
-    live_color = "white"
     if live_price is not None:
         live_val = f"${live_price:.2f}"
 
@@ -950,21 +975,21 @@ def build_open_position_strip_html(t, live_price):
 
 # ── Ticker view ────────────────────────────────────────────────────
 def render_ticker(sym):
-    trades        = [t for t in all_trades if t["symbol"] == sym]
-    open_trades   = sorted([t for t in trades if not t.get("closed")], key=open_trade_sort_key)
+    trades = [t for t in all_trades if t["symbol"] == sym]
+    open_trades = sorted([t for t in trades if not t.get("closed")], key=open_trade_sort_key)
     closed_trades = [t for t in trades if t.get("closed")]
-    open_opts     = [t for t in open_trades if t["type"] != "Stock"]
+    open_opts = [t for t in open_trades if t["type"] != "Stock"]
 
-    all_premium  = sum(float(t.get("total_premium") or 0) for t in trades if t["type"] != "Stock")
-    net_premium  = sum(float(t.get("closed_pnl") or 0) for t in closed_trades if t["type"] != "Stock")
-    closed_pnl   = sum(float(t.get("closed_pnl") or 0) for t in closed_trades)
+    all_premium = sum(float(t.get("total_premium") or 0) for t in trades if t["type"] != "Stock")
+    net_premium = sum(float(t.get("closed_pnl") or 0) for t in closed_trades if t["type"] != "Stock")
+    closed_pnl = sum(float(t.get("closed_pnl") or 0) for t in closed_trades)
     open_premium = sum(float(t.get("total_premium") or 0) for t in open_opts)
-    wins         = sum(1 for t in closed_trades if float(t.get("closed_pnl") or 0) > 0)
-    win_rate_str = f"{wins/len(closed_trades)*100:.0f}% ({wins}/{len(closed_trades)})" if len(closed_trades) >= 3 else "— (3+ needed)"
-    proj         = calc_projection(trades, sym)
-    cp           = fmt_proj(proj["closed_proj"], proj["closed_cycles"], proj["avg_c_dte"], proj["basis"])
+    wins = sum(1 for t in closed_trades if float(t.get("closed_pnl") or 0) > 0)
+    win_rate_str = f"{wins / len(closed_trades) * 100:.0f}% ({wins}/{len(closed_trades)})" if len(closed_trades) >= 3 else "— (3+ needed)"
+    proj = calc_projection(trades, sym)
+    cp = fmt_proj(proj["closed_proj"], proj["closed_cycles"], proj["avg_c_dte"], proj["basis"])
     closed_opts_count = len([t for t in closed_trades if t["type"] != "Stock"])
-    basis_str    = f"BASIS ${proj['basis']:,.2f}" if proj["basis"] else "BASIS NOT SET"
+    basis_str = f"BASIS ${proj['basis']:,.2f}" if proj["basis"] else "BASIS NOT SET"
 
     st.markdown(
         f'<div class="ticker-header"><span class="ticker-header-sym">{sym}</span><span class="ticker-header-basis">{basis_str}</span></div>',
@@ -984,19 +1009,19 @@ def render_ticker(sym):
     tab1, tab2 = st.tabs(["TRADE LOG", "SCREENER"])
 
     with tab1:
-        pnl_color  = "green" if closed_pnl >= 0 else "red"
-        pnl_str    = f"+${closed_pnl:.2f}" if closed_pnl >= 0 else f"-${abs(closed_pnl):.2f}"
-        proj_label = "PROJ / YR" if closed_opts_count >= 3 else f"PROJ/YR ({3-closed_opts_count} more)"
-        proj_val   = cp[0] if closed_opts_count >= 3 else "—"
-        proj_sub   = cp[1] if closed_opts_count >= 3 else "(3+ closes)"
+        pnl_color = "green" if closed_pnl >= 0 else "red"
+        pnl_str = f"+${closed_pnl:.2f}" if closed_pnl >= 0 else f"-${abs(closed_pnl):.2f}"
+        proj_label = "PROJ / YR" if closed_opts_count >= 3 else f"PROJ/YR ({3 - closed_opts_count} more)"
+        proj_val = cp[0] if closed_opts_count >= 3 else "—"
+        proj_sub = cp[1] if closed_opts_count >= 3 else "(3+ closes)"
 
         render_stat_cols([
-            ("Realized P&L",  pnl_str,                                           pnl_color, None),
-            ("Gross Premium", f"${all_premium:.2f}",                             "white",   None),
-            ("Net Retained",  f"${net_premium:.2f}",                             "white",   None),
-            ("Open Premium",  f"${open_premium:.2f}" if open_premium else "—",   "amber",   None),
-            ("Win Rate",      win_rate_str,                                      "white",   None),
-            (proj_label,      proj_val,                                          "amber",   proj_sub),
+            ("Realized P&L", pnl_str, pnl_color, None),
+            ("Gross Premium", f"${all_premium:.2f}", "white", None),
+            ("Net Retained", f"${net_premium:.2f}", "white", None),
+            ("Open Premium", f"${open_premium:.2f}" if open_premium else "—", "amber", None),
+            ("Win Rate", win_rate_str, "white", None),
+            (proj_label, proj_val, "amber", proj_sub),
         ])
 
         st.markdown('<div class="section-title">Open positions</div>', unsafe_allow_html=True)
@@ -1006,11 +1031,7 @@ def render_ticker(sym):
             for t in open_trades:
                 st.markdown(build_open_position_strip_html(t, live_price), unsafe_allow_html=True)
 
-                if t["type"] != "Stock":
-                    c1, c2, c3, c4 = st.columns([1.2, 1, 1, 4.8])
-                else:
-                    c1, c2, c3, c4 = st.columns([1.2, 1, 1, 4.8])
-
+                c1, c2, c3, c4 = st.columns([1.2, 1, 1, 4.8])
                 with c1:
                     if st.button("✓ Close", key=f"close_{t['id']}", use_container_width=True, type="primary"):
                         st.session_state[f"closing_{t['id']}"] = True
@@ -1034,11 +1055,11 @@ def render_ticker(sym):
         st.markdown('<div class="section-title">Closed trades</div>', unsafe_allow_html=True)
         if closed_trades:
             for t in closed_trades:
-                is_opt   = t["type"] != "Stock"
-                dit      = days_between(t["date"], t.get("closed_date", "")) if t.get("closed_date") else "—"
-                pnl      = float(t.get("closed_pnl") or 0)
-                ann      = f"{float(t['annualized']):.0f}%" if t.get("annualized") else "—"
-                qty_str  = f"@${float(t['strike']):.0f}" if (is_opt and t.get("strike")) else (f"{t.get('shares', '')}sh" if t.get("shares") else "")
+                is_opt = t["type"] != "Stock"
+                dit = days_between(t["date"], t.get("closed_date", "")) if t.get("closed_date") else "—"
+                pnl = float(t.get("closed_pnl") or 0)
+                ann = f"{float(t['annualized']):.0f}%" if t.get("annualized") else "—"
+                qty_str = f"@${float(t['strike']):.0f}" if (is_opt and t.get("strike")) else (f"{t.get('shares', '')}sh" if t.get("shares") else "")
                 pnl_sign = "+" if pnl >= 0 else ""
 
                 with st.expander(f"{t['date']} · {t['type']} {t['side']} {qty_str} · P&L: {pnl_sign}${pnl:.2f}"):
@@ -1051,11 +1072,11 @@ def render_ticker(sym):
                             unsafe_allow_html=True
                         )
 
-                    _m(c1, "TYPE",    f"{t['type']} {t['side']}")
+                    _m(c1, "TYPE", f"{t['type']} {t['side']}")
                     _m(c2, "PREMIUM", f"${float(t['total_premium']):.2f}")
-                    _m(c3, "P&L",     f"{pnl_sign}${pnl:.2f}")
-                    _m(c4, "DIT",     f"{dit}d" if dit != "—" else "—")
-                    _m(c5, "ANN %",   ann)
+                    _m(c3, "P&L", f"{pnl_sign}${pnl:.2f}")
+                    _m(c4, "DIT", f"{dit}d" if dit != "—" else "—")
+                    _m(c5, "ANN %", ann)
 
                     if t.get("notes"):
                         st.markdown(f'<div style="font-size:11px;color:#4a4a42;margin-top:6px">✎ {t["notes"]}</div>', unsafe_allow_html=True)
@@ -1094,9 +1115,9 @@ def render_edit_form(t):
         if is_opt:
             col3, col4, col5 = st.columns(3)
             with col3:
-                new_premium   = st.number_input("Premium/ct ($)", value=float(t.get("premium") or 0), step=0.01)
+                new_premium = st.number_input("Premium/ct ($)", value=float(t.get("premium") or 0), step=0.01)
             with col4:
-                new_strike    = st.number_input("Strike ($)", value=float(t.get("strike") or 0), step=0.5)
+                new_strike = st.number_input("Strike ($)", value=float(t.get("strike") or 0), step=0.5)
             with col5:
                 new_contracts = st.number_input("Contracts", value=int(t.get("contracts") or 1), step=1)
 
@@ -1104,15 +1125,15 @@ def render_edit_form(t):
             if t.get("expiry"):
                 try:
                     exp_val = datetime.strptime(str(t["expiry"]), "%Y-%m-%d").date()
-                except:
+                except Exception:
                     pass
 
             new_expiry = st.date_input("Expiry", value=exp_val)
-            new_spot   = st.number_input("Stock price at open ($)", value=float(t.get("spot") or 0), step=0.01)
+            new_spot = st.number_input("Stock price at open ($)", value=float(t.get("spot") or 0), step=0.01)
         else:
             col3, col4 = st.columns(2)
             with col3:
-                new_price  = st.number_input("Price/share ($)", value=float(t.get("premium") or 0), step=0.01)
+                new_price = st.number_input("Price/share ($)", value=float(t.get("premium") or 0), step=0.01)
             with col4:
                 new_shares = st.number_input("Shares", value=int(t.get("shares") or 100), step=1)
 
@@ -1131,7 +1152,7 @@ def render_edit_form(t):
 
             if is_opt:
                 total = new_premium * 100 * int(new_contracts)
-                ann   = None
+                ann = None
                 if new_spot > 0:
                     dte = (new_expiry - new_date).days
                     if dte > 0:
@@ -1181,7 +1202,7 @@ def render_close_form(t):
             else:
                 pnl = (close_price - float(t["premium"])) * int(t.get("shares", 100))
             color = "#a8d472" if pnl >= 0 else "#e87070"
-            sign  = "+" if pnl >= 0 else ""
+            sign = "+" if pnl >= 0 else ""
             st.markdown(
                 f'<div style="font-size:14px;font-weight:600;color:{color};margin:8px 0">Realized P&L: {sign}${pnl:.2f}</div>',
                 unsafe_allow_html=True
@@ -1211,7 +1232,7 @@ def render_close_form(t):
                 "closed_date": str(close_date),
                 "closed_price": close_price,
                 "closed_pnl": round(pnl, 2),
-                "annualized": round(ann, 2) if ann else t.get("annualized")
+                "annualized": round(ann, 2) if ann else t.get("annualized"),
             })
             st.session_state.pop(f"closing_{t['id']}", None)
             st.rerun()
@@ -1224,6 +1245,7 @@ def render_close_form(t):
 def render_add_trade_form(sym):
     with st.form("add_trade_form"):
         st.markdown(f"**New trade — {sym}**")
+
         col1, col2 = st.columns(2)
         with col1:
             trade_type = st.selectbox("Type", ["Call", "Put", "Stock"])
@@ -1249,8 +1271,14 @@ def render_add_trade_form(sym):
             with col7:
                 premium = st.number_input("Premium / contract ($)", min_value=0.0, step=0.01)
 
-            open_stock   = next(
-                (t for t in all_trades if t["symbol"] == sym and t["type"] == "Stock" and t["side"] == "Buy" and not t.get("closed")),
+            open_stock = next(
+                (
+                    t for t in all_trades
+                    if t["symbol"] == sym
+                    and t["type"] == "Stock"
+                    and t["side"] == "Buy"
+                    and not t.get("closed")
+                ),
                 None
             )
             default_spot = float(open_stock["premium"]) if open_stock else 0.0
@@ -1276,9 +1304,9 @@ def render_add_trade_form(sym):
 
                         if side == "Sell" and strike > 0:
                             if trade_type == "Call":
-                                stock_gain   = (strike - spot) * 100 * contracts
+                                stock_gain = (strike - spot) * 100 * contracts
                                 total_profit = stock_gain + total_prem
-                                raw_pct      = total_profit / (spot * 100 * contracts) * 100
+                                raw_pct = total_profit / (spot * 100 * contracts) * 100
                                 st.warning(f"If assigned at ${strike}: ${total_profit:.2f} ({raw_pct:.1f}%)")
                             elif trade_type == "Put":
                                 be = strike - premium
@@ -1286,4 +1314,228 @@ def render_add_trade_form(sym):
         else:
             col5, col6 = st.columns(2)
             with col5:
-                shares = st.number_input("Shares
+                shares = st.number_input("Shares", min_value=1, value=100, step=1)
+            with col6:
+                stock_price = st.number_input("Price per share ($)", min_value=0.0, step=0.01)
+
+            if stock_price > 0:
+                st.success(f"Cost basis: ${stock_price * shares:,.2f} ({shares} shares × ${stock_price:.2f})")
+
+        notes = st.text_input("Notes (optional)", placeholder="e.g. high IV, wheel trade...")
+
+        col_sub, col_can = st.columns(2)
+        with col_sub:
+            submitted = st.form_submit_button("Add trade", type="primary")
+        with col_can:
+            cancelled = st.form_submit_button("Cancel")
+
+        if submitted:
+            trade_id = str(uuid.uuid4())
+            trade = {
+                "id": trade_id,
+                "symbol": sym,
+                "type": trade_type,
+                "side": side,
+                "date": str(trade_date),
+                "notes": notes,
+                "closed": False,
+            }
+
+            if is_opt:
+                total_prem = premium * 100 * contracts
+                ann = None
+                if spot > 0 and expiry:
+                    dte = (expiry - trade_date).days
+                    if dte > 0:
+                        ann = (total_prem / (spot * 100 * contracts)) * (365 / dte) * 100
+
+                trade.update({
+                    "expiry": str(expiry),
+                    "strike": float(strike),
+                    "contracts": int(contracts),
+                    "premium": float(premium),
+                    "total_premium": float(total_prem),
+                    "spot": float(spot),
+                    "annualized": round(ann, 2) if ann else None,
+                })
+            else:
+                trade.update({
+                    "shares": int(shares),
+                    "premium": float(stock_price),
+                    "total_premium": float(stock_price * shares),
+                })
+
+            save_trade(trade)
+            st.session_state.show_add_trade = False
+            st.rerun()
+
+        if cancelled:
+            st.session_state.show_add_trade = False
+            st.rerun()
+
+# ── Quick log ──────────────────────────────────────────────────────
+def render_quick_add(sym):
+    with st.form("quick_add_form"):
+        st.markdown(f"**Quick log (closed) — {sym}**")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            trade_type = st.selectbox("Type", ["Call", "Put", "Stock"])
+        with col2:
+            side = st.selectbox("Side", ["Sell", "Buy"])
+        with col3:
+            trade_date = st.date_input("Trade date", value=date.today())
+
+        col4, col5, col6 = st.columns(3)
+        with col4:
+            total_premium = st.number_input("Premium collected ($)", min_value=0.0, step=1.0)
+        with col5:
+            realized_pnl = st.number_input("Realized P&L ($)", step=1.0)
+        with col6:
+            notes = st.text_input("Notes", placeholder="optional")
+
+        col_sub, col_can = st.columns(2)
+        with col_sub:
+            submitted = st.form_submit_button("Log trade", type="primary")
+        with col_can:
+            cancelled = st.form_submit_button("Cancel")
+
+        if submitted and total_premium >= 0:
+            trade = {
+                "id": str(uuid.uuid4()),
+                "symbol": sym,
+                "type": trade_type,
+                "side": side,
+                "date": str(trade_date),
+                "notes": notes,
+                "total_premium": float(total_premium),
+                "premium": float(total_premium),
+                "closed": True,
+                "closed_date": str(trade_date),
+                "closed_pnl": float(realized_pnl),
+            }
+            save_trade(trade)
+            st.session_state.show_quick_add = False
+            st.rerun()
+
+        if cancelled:
+            st.session_state.show_quick_add = False
+            st.rerun()
+
+# ── Screener ───────────────────────────────────────────────────────
+def render_screener(sym, trades):
+    st.markdown(
+        '<div style="font-size:11px;color:#4a4a42;margin-bottom:12px">Live options chain · 25–55 DTE · ranked by return/safety score</div>',
+        unsafe_allow_html=True
+    )
+
+    open_stock = next(
+        (
+            t for t in trades
+            if t["symbol"] == sym
+            and t["type"] == "Stock"
+            and t["side"] == "Buy"
+            and not t.get("closed")
+        ),
+        None
+    )
+    entry_price = float(open_stock["premium"]) if open_stock else None
+    spot = get_price(sym)
+
+    if entry_price:
+        st.info(f"Entry: ${entry_price:.2f} · Live: ${spot:.2f}" if spot else f"Entry: ${entry_price:.2f}")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        opt_type = st.selectbox("Option type", ["Calls", "Puts"], key="sc_type")
+    with col2:
+        min_otm = st.number_input("Min OTM %", value=2.0, step=0.5, key="sc_min_otm")
+    with col3:
+        fetch = st.button("Fetch chain", type="primary", key="sc_fetch")
+
+    if fetch:
+        with st.spinner("Fetching..."):
+            df = get_options_chain(sym, opt_type.lower()[:-1] + "s")
+
+        if df.empty:
+            st.error("No contracts found")
+            return
+
+        basis = (entry_price or spot or 1) * 100
+        results = []
+
+        for _, row in df.iterrows():
+            strike = float(row.get("strike", 0))
+            bid = float(row.get("bid", 0) or 0)
+            ask = float(row.get("ask", 0) or 0)
+            mid = (bid + ask) / 2
+            dte = int(row.get("dte", 30))
+            expiry = str(row.get("expiry", ""))
+            iv = float(row.get("impliedVolatility", 0) or 0)
+
+            if mid <= 0 or strike <= 0:
+                continue
+
+            otm = ((strike - spot) / spot * 100) if (spot and opt_type == "Calls") else ((spot - strike) / spot * 100 if spot else 0)
+
+            if otm < min_otm:
+                continue
+
+            total_prem = mid * 100
+            ann_return = (total_prem / basis) * (365 / dte) * 100 if dte > 0 else 0
+
+            assigned_str = "—"
+            if opt_type == "Calls" and entry_price:
+                stock_gain = (strike - entry_price) * 100
+                total_profit = stock_gain + total_prem
+                raw_pct = total_profit / (entry_price * 100) * 100
+                assigned_str = f"${total_profit:.0f} ({raw_pct:.1f}%)"
+            elif opt_type == "Puts":
+                assigned_str = f"BE ${strike - mid:.2f}"
+
+            safety = min(otm / 15, 1)
+            ret_score = min(ann_return / 60, 1)
+            score = ret_score * 0.6 + safety * 0.4
+            grade = "A" if score > 0.8 else ("B" if score > 0.6 else ("C" if score > 0.4 else "D"))
+
+            results.append({
+                "Grade": grade,
+                "Strike": f"${strike:.2f}",
+                "Expiry": expiry,
+                "DTE": dte,
+                "Bid": f"${bid:.2f}",
+                "Ask": f"${ask:.2f}",
+                "Mid": f"${mid:.2f}",
+                "Total $": f"${total_prem:.0f}",
+                "Ann %": f"{ann_return:.1f}%",
+                "If assigned": assigned_str,
+                "OTM %": f"+{otm:.1f}%",
+                "IV": f"{iv * 100:.0f}%" if iv else "—",
+                "_score": score,
+            })
+
+        if not results:
+            st.warning("No contracts passed filters")
+            return
+
+        results.sort(key=lambda x: x["_score"], reverse=True)
+        for r in results:
+            del r["_score"]
+
+        st.markdown(
+            f'<div style="font-size:11px;color:#4a4a42;margin-bottom:8px">{len(results)} contracts · top {min(30, len(results))} shown</div>',
+            unsafe_allow_html=True
+        )
+        st.dataframe(pd.DataFrame(results[:30]), use_container_width=True, hide_index=True)
+
+# ── Main render ────────────────────────────────────────────────────
+if st.session_state.active_tab == "dashboard":
+    render_dashboard()
+elif st.session_state.active_ticker:
+    sym = st.session_state.active_ticker
+    if st.session_state.show_add_trade:
+        render_add_trade_form(sym)
+    elif st.session_state.show_quick_add:
+        render_quick_add(sym)
+    else:
+        render_ticker(sym)
