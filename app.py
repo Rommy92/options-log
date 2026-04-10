@@ -33,7 +33,14 @@ html, body, [class*="css"] {
 
 /* ── Main ── */
 .main { background: #131311; }
-.block-container { padding-top: 1.5rem; padding-bottom: 2rem; background: #131311; }
+.block-container { padding-top: 3rem; padding-bottom: 2rem; background: #131311; }
+
+/* ── Hide Streamlit top header bar ── */
+header[data-testid="stHeader"] {
+    background: #131311 !important;
+    border-bottom: none !important;
+}
+[data-testid="stToolbar"] { display: none !important; }
 
 /* ── Remove default metric boxes ── */
 div[data-testid="metric-container"] {
@@ -644,7 +651,7 @@ def render_dashboard():
         ("Avg Open Ann.",   avg_ann,                                           "amber",   None),
     ])
 
-    # Monthly chart
+    # Monthly cards
     st.markdown('<div class="section-title">Monthly premium collected — last 12 months</div>', unsafe_allow_html=True)
     monthly = {}
     for t in trades:
@@ -657,23 +664,28 @@ def render_dashboard():
     for i in range(11, -1, -1):
         d = date(today.year, today.month, 1) - timedelta(days=i*30)
         key = d.strftime("%Y-%m")
-        months.append({"month": d.strftime("%b %y"), "premium": monthly.get(key, 0)})
+        months.append({"month": d.strftime("%b '%y"), "key": key, "premium": monthly.get(key, 0)})
 
-    df_monthly = pd.DataFrame(months)
-    fig = go.Figure(go.Bar(
-        x=df_monthly["month"], y=df_monthly["premium"],
-        marker_color=["#f0c03c" if v > 0 else "#1e1e1a" for v in df_monthly["premium"]],
-        text=[f"${v:.0f}" if v > 0 else "" for v in df_monthly["premium"]],
-        textposition="outside", textfont=dict(size=10, color="#f0c03c")
-    ))
-    fig.update_layout(
-        height=200, margin=dict(l=0, r=0, t=16, b=0),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(tickfont=dict(size=10, color="#4a4a42", family="Inter"), gridcolor="rgba(255,255,255,0.03)"),
-        yaxis=dict(tickfont=dict(size=10, color="#4a4a42", family="Inter"), gridcolor="rgba(255,255,255,0.03)", tickprefix="$"),
-        showlegend=False
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    max_prem = max((m["premium"] for m in months), default=1) or 1
+
+    # Render 6 per row
+    for row_start in range(0, 12, 6):
+        row_months = months[row_start:row_start+6]
+        cols = st.columns(6)
+        for col, m in zip(cols, row_months):
+            prem = m["premium"]
+            bar_pct = int(prem / max_prem * 100) if max_prem else 0
+            val_str = f"${prem:,.0f}" if prem else "—"
+            val_color = "#f0c03c" if prem > 0 else "#2a2a27"
+            bar_color = "#f0c03c" if prem > 0 else "#1e1e1b"
+            col.markdown(f"""
+<div style="background:#1a1a17;border:1px solid rgba(255,255,255,0.05);border-radius:6px;padding:10px 12px">
+    <div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#3a3a32;margin-bottom:6px">{m['month']}</div>
+    <div style="font-size:15px;font-weight:600;font-family:'JetBrains Mono',monospace;color:{val_color};margin-bottom:8px">{val_str}</div>
+    <div style="height:3px;background:#1e1e1b;border-radius:2px">
+        <div style="height:3px;width:{bar_pct}%;background:{bar_color};border-radius:2px"></div>
+    </div>
+</div>""", unsafe_allow_html=True)
 
     # Open positions
     st.markdown('<div class="section-title">Open positions</div>', unsafe_allow_html=True)
